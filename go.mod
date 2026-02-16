@@ -15,6 +15,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
+replace github.com/go-go-golems/pinocchio => ../../pinocchio
+
 require (
 	cloud.google.com/go v0.121.1 // indirect
 	cloud.google.com/go/ai v0.8.0 // indirect
