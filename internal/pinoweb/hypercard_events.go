@@ -22,10 +22,10 @@ const (
 	eventTypeHypercardSuggestionsUpdate events.EventType = "hypercard.suggestions.update"
 	eventTypeHypercardSuggestionsV1     events.EventType = "hypercard.suggestions.v1"
 	eventTypeHypercardSuggestionsError  events.EventType = "hypercard.suggestions.error"
-	eventTypeHypercardCardStart         events.EventType = "hypercard.card.start"
-	eventTypeHypercardCardUpdate        events.EventType = "hypercard.card.update"
-	eventTypeHypercardCardProposalV1    events.EventType = "hypercard.card_proposal.v1"
-	eventTypeHypercardCardError         events.EventType = "hypercard.card.error"
+	eventTypeHypercardCardStart      events.EventType = "hypercard.card.start"
+	eventTypeHypercardCardUpdate     events.EventType = "hypercard.card.update"
+	eventTypeHypercardCardV2         events.EventType = "hypercard.card.v2"
+	eventTypeHypercardCardError      events.EventType = "hypercard.card.error"
 	hypercardPolicyMiddlewareName                        = "inventory_artifact_policy"
 	hypercardGeneratorMiddlewareName                     = "inventory_artifact_generator"
 	hypercardSuggestionsMiddlewareName                   = "inventory_suggestions_policy"
@@ -86,25 +86,25 @@ type HypercardSuggestionsErrorEvent struct {
 
 type HypercardCardStartEvent struct {
 	events.EventImpl
-	ItemID   string `json:"item_id"`
-	Title    string `json:"title,omitempty"`
-	Template string `json:"template,omitempty"`
+	ItemID string `json:"item_id"`
+	Title  string `json:"title,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 
 type HypercardCardUpdateEvent struct {
 	events.EventImpl
-	ItemID   string `json:"item_id"`
-	Title    string `json:"title,omitempty"`
-	Template string `json:"template,omitempty"`
-	Data     any    `json:"data,omitempty"`
+	ItemID string `json:"item_id"`
+	Title  string `json:"title,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Data   any    `json:"data,omitempty"`
 }
 
-type HypercardCardProposalReadyEvent struct {
+type HypercardCardV2ReadyEvent struct {
 	events.EventImpl
-	ItemID   string `json:"item_id"`
-	Title    string `json:"title,omitempty"`
-	Template string `json:"template,omitempty"`
-	Data     any    `json:"data,omitempty"`
+	ItemID string `json:"item_id"`
+	Title  string `json:"title,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Data   any    `json:"data,omitempty"`
 }
 
 type HypercardCardErrorEvent struct {
@@ -154,8 +154,8 @@ func registerHypercardEventFactories() {
 	_ = events.RegisterEventFactory(string(eventTypeHypercardCardUpdate), func() events.Event {
 		return &HypercardCardUpdateEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardUpdate}}
 	})
-	_ = events.RegisterEventFactory(string(eventTypeHypercardCardProposalV1), func() events.Event {
-		return &HypercardCardProposalReadyEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardProposalV1}}
+	_ = events.RegisterEventFactory(string(eventTypeHypercardCardV2), func() events.Event {
+		return &HypercardCardV2ReadyEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardV2}}
 	})
 	_ = events.RegisterEventFactory(string(eventTypeHypercardCardError), func() events.Event {
 		return &HypercardCardErrorEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError}}
@@ -250,9 +250,9 @@ func registerHypercardSEMMappings() {
 	})
 	semregistry.RegisterByType[*HypercardCardStartEvent](func(ev *HypercardCardStartEvent) ([][]byte, error) {
 		frame, err := semFrame("hypercard.card.start", ev.ItemID, map[string]any{
-			"itemId":   ev.ItemID,
-			"title":    ev.Title,
-			"template": ev.Template,
+			"itemId": ev.ItemID,
+			"title":  ev.Title,
+			"name":   ev.Name,
 		})
 		if err != nil {
 			return nil, err
@@ -261,22 +261,22 @@ func registerHypercardSEMMappings() {
 	})
 	semregistry.RegisterByType[*HypercardCardUpdateEvent](func(ev *HypercardCardUpdateEvent) ([][]byte, error) {
 		frame, err := semFrame("hypercard.card.update", ev.ItemID, map[string]any{
-			"itemId":   ev.ItemID,
-			"title":    ev.Title,
-			"template": ev.Template,
-			"data":     ev.Data,
+			"itemId": ev.ItemID,
+			"title":  ev.Title,
+			"name":   ev.Name,
+			"data":   ev.Data,
 		})
 		if err != nil {
 			return nil, err
 		}
 		return [][]byte{frame}, nil
 	})
-	semregistry.RegisterByType[*HypercardCardProposalReadyEvent](func(ev *HypercardCardProposalReadyEvent) ([][]byte, error) {
-		frame, err := semFrame("hypercard.card_proposal.v1", ev.ItemID, map[string]any{
-			"itemId":   ev.ItemID,
-			"title":    ev.Title,
-			"template": ev.Template,
-			"data":     ev.Data,
+	semregistry.RegisterByType[*HypercardCardV2ReadyEvent](func(ev *HypercardCardV2ReadyEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.card.v2", ev.ItemID, map[string]any{
+			"itemId": ev.ItemID,
+			"title":  ev.Title,
+			"name":   ev.Name,
+			"data":   ev.Data,
 		})
 		if err != nil {
 			return nil, err
@@ -381,7 +381,7 @@ func registerHypercardTimelineHandlers() {
 	}
 
 	registerResult("hypercard.widget.v1", "hypercard.widget.v1")
-	registerResult("hypercard.card_proposal.v1", "hypercard.card_proposal.v1")
+	registerResult("hypercard.card.v2", "hypercard.card.v2")
 }
 
 func parseTimelineData(raw json.RawMessage) map[string]any {

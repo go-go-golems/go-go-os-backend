@@ -36,17 +36,7 @@ func defaultArtifactPolicyInstructions() string {
 		"actions: []\n" +
 		"```\n" +
 		"</hypercard:widget:v1>\n\n" +
-		"<hypercard:cardproposal:v1>\n" +
-		"```yaml\n" +
-		"template: reportViewer | itemViewer\n" +
-		"title: string\n" +
-		"artifact:\n" +
-		"  id: string\n" +
-		"  data: {}\n" +
-		"window:\n" +
-		"  dedupe_key: optional-string\n" +
-		"```\n" +
-		"</hypercard:cardproposal:v1>\n\n" +
+		runtimeCardPromptInstructions() + "\n\n" +
 		"Rules:\n" +
 		"- First output a short plain-language summary sentence before any structured tag.\n" +
 		"- Do not invent fallback payloads if you cannot produce valid YAML.\n" +
@@ -139,14 +129,14 @@ func NewInventoryArtifactGeneratorMiddleware(cfg InventoryArtifactGeneratorConfi
 				})
 			}
 
-			if requireCard && !strings.Contains(assistantText, "<hypercard:cardproposal:v1>") {
+			if requireCard && !strings.Contains(assistantText, "<hypercard:card:v2>") {
 				events.PublishEventToContext(ctx, &HypercardCardErrorEvent{
 					EventImpl: events.EventImpl{
 						Type_:     eventTypeHypercardCardError,
 						Metadata_: md,
 					},
 					ItemID: baseID + ":card",
-					Error:  "missing structured card proposal block <hypercard:cardproposal:v1>",
+					Error:  "missing structured card block <hypercard:card:v2>",
 				})
 			}
 

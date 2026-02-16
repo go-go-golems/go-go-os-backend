@@ -32,20 +32,22 @@ func (e *inventoryWidgetExtractor) NewSession(ctx context.Context, _ events.Even
 	}
 }
 
-type inventoryCardProposalExtractor struct{}
+// inventoryCardProposalExtractor removed — replaced by inventoryRuntimeCardExtractor (HC-036)
 
-func (e *inventoryCardProposalExtractor) TagPackage() string { return "hypercard" }
-func (e *inventoryCardProposalExtractor) TagType() string    { return "cardproposal" }
-func (e *inventoryCardProposalExtractor) TagVersion() string { return "v1" }
-func (e *inventoryCardProposalExtractor) NewSession(ctx context.Context, _ events.EventMetadata, itemID string) structuredsink.ExtractorSession {
-	return &inventoryCardSession{
+type inventoryRuntimeCardExtractor struct{}
+
+func (e *inventoryRuntimeCardExtractor) TagPackage() string { return "hypercard" }
+func (e *inventoryRuntimeCardExtractor) TagType() string    { return "card" }
+func (e *inventoryRuntimeCardExtractor) TagVersion() string { return "v2" }
+func (e *inventoryRuntimeCardExtractor) NewSession(ctx context.Context, _ events.EventMetadata, itemID string) structuredsink.ExtractorSession {
+	return &inventoryRuntimeCardSession{
 		ctx:    ctx,
 		itemID: itemID,
-		ctrl: parsehelpers.NewDebouncedYAML[inventoryCardProposalPayload](parsehelpers.DebounceConfig{
+		ctrl: parsehelpers.NewDebouncedYAML[inventoryRuntimeCardPayload](parsehelpers.DebounceConfig{
 			SnapshotEveryBytes: 256,
 			SnapshotOnNewline:  true,
 			ParseTimeout:       25 * time.Millisecond,
-			MaxBytes:           64 << 10,
+			MaxBytes:           128 << 10, // 128KB — card.code can be larger
 		}),
 	}
 }
@@ -85,6 +87,16 @@ type inventoryCardProposalPayload struct {
 	Title    string                   `yaml:"title" json:"title"`
 	Artifact inventoryArtifactPayload `yaml:"artifact" json:"artifact"`
 	Window   map[string]any           `yaml:"window" json:"window"`
+}
+
+type inventoryRuntimeCardPayload struct {
+	Name     string                   `yaml:"name" json:"name"`
+	Title    string                   `yaml:"title" json:"title"`
+	Artifact inventoryArtifactPayload `yaml:"artifact" json:"artifact"`
+	Card     struct {
+		ID   string `yaml:"id" json:"id"`
+		Code string `yaml:"code" json:"code"`
+	} `yaml:"card" json:"card"`
 }
 
 type inventorySuggestionsPayload struct {
@@ -206,26 +218,21 @@ func (s *inventoryWidgetSession) OnCompleted(ctx context.Context, raw []byte, su
 	return evs
 }
 
-type inventoryCardSession struct {
+// inventoryCardSession removed — replaced by inventoryRuntimeCardSession (HC-036)
+
+type inventoryRuntimeCardSession struct {
 	ctx       context.Context
 	itemID    string
-	ctrl      *parsehelpers.YAMLController[inventoryCardProposalPayload]
+	ctrl      *parsehelpers.YAMLController[inventoryRuntimeCardPayload]
 	started   bool
-	lastValid *inventoryCardProposalPayload
+	lastValid *inventoryRuntimeCardPayload
 }
 
-type inventorySuggestionsSession struct {
-	ctx     context.Context
-	itemID  string
-	ctrl    *parsehelpers.YAMLController[inventorySuggestionsPayload]
-	started bool
-}
-
-func (s *inventoryCardSession) OnStart(context.Context) []events.Event {
+func (s *inventoryRuntimeCardSession) OnStart(context.Context) []events.Event {
 	return nil
 }
 
-func (s *inventoryCardSession) OnRaw(ctx context.Context, chunk []byte) []events.Event {
+func (s *inventoryRuntimeCardSession) OnRaw(ctx context.Context, chunk []byte) []events.Event {
 	if s.ctrl == nil {
 		return nil
 	}
@@ -234,33 +241,39 @@ func (s *inventoryCardSession) OnRaw(ctx context.Context, chunk []byte) []events
 		return nil
 	}
 	s.lastValid = snap
+	name := strings.TrimSpace(snap.Name)
 	title := strings.TrimSpace(snap.Title)
-	if title == "" {
+	displayName := name
+	if displayName == "" {
+		displayName = title
+	}
+	if displayName == "" {
 		return nil
 	}
-	template := strings.TrimSpace(snap.Template)
+
 	evs := []events.Event{}
 	if !s.started {
 		s.started = true
 		evs = append(evs, &HypercardCardStartEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardStart},
 			ItemID:    s.itemID,
-			Title:     title,
-			Template:  template,
+			Title:     displayName,
+			Name:      name,
 		})
 		return evs
 	}
+
 	evs = append(evs, &HypercardCardUpdateEvent{
 		EventImpl: events.EventImpl{Type_: eventTypeHypercardCardUpdate},
 		ItemID:    s.itemID,
-		Title:     title,
-		Template:  template,
+		Title:     displayName,
+		Name:      name,
 		Data:      payloadToMap(snap),
 	})
 	return evs
 }
 
-func (s *inventoryCardSession) OnCompleted(ctx context.Context, raw []byte, success bool, err error) []events.Event {
+func (s *inventoryRuntimeCardSession) OnCompleted(ctx context.Context, raw []byte, success bool, err error) []events.Event {
 	evs := []events.Event{}
 	if err != nil {
 		return []events.Event{&HypercardCardErrorEvent{
@@ -273,7 +286,7 @@ func (s *inventoryCardSession) OnCompleted(ctx context.Context, raw []byte, succ
 		return []events.Event{&HypercardCardErrorEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError},
 			ItemID:    s.itemID,
-			Error:     "card proposal parser not initialized",
+			Error:     "runtime card parser not initialized",
 		}}
 	}
 	snap, parseErr := s.ctrl.FinalBytes(raw)
@@ -288,23 +301,36 @@ func (s *inventoryCardSession) OnCompleted(ctx context.Context, raw []byte, succ
 		return []events.Event{&HypercardCardErrorEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError},
 			ItemID:    s.itemID,
-			Error:     "missing card proposal payload",
+			Error:     "missing runtime card payload",
 		}}
 	}
+	name := strings.TrimSpace(snap.Name)
 	title := strings.TrimSpace(snap.Title)
-	if title == "" {
+	displayName := name
+	if displayName == "" {
+		displayName = title
+	}
+	if displayName == "" {
 		return []events.Event{&HypercardCardErrorEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError},
 			ItemID:    s.itemID,
-			Error:     "card proposal title is required",
+			Error:     "runtime card name is required",
 		}}
 	}
-	template := strings.TrimSpace(snap.Template)
-	if template == "" {
+	cardID := strings.TrimSpace(snap.Card.ID)
+	if cardID == "" {
 		return []events.Event{&HypercardCardErrorEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError},
 			ItemID:    s.itemID,
-			Error:     "card proposal template is required",
+			Error:     "runtime card.id is required",
+		}}
+	}
+	cardCode := strings.TrimSpace(snap.Card.Code)
+	if cardCode == "" {
+		return []events.Event{&HypercardCardErrorEvent{
+			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError},
+			ItemID:    s.itemID,
+			Error:     "runtime card.code is required",
 		}}
 	}
 
@@ -313,19 +339,28 @@ func (s *inventoryCardSession) OnCompleted(ctx context.Context, raw []byte, succ
 		evs = append(evs, &HypercardCardStartEvent{
 			EventImpl: events.EventImpl{Type_: eventTypeHypercardCardStart},
 			ItemID:    s.itemID,
-			Title:     title,
-			Template:  template,
+			Title:     displayName,
+			Name:      name,
 		})
 	}
-	evs = append(evs, &HypercardCardProposalReadyEvent{
-		EventImpl: events.EventImpl{Type_: eventTypeHypercardCardProposalV1},
+	evs = append(evs, &HypercardCardV2ReadyEvent{
+		EventImpl: events.EventImpl{Type_: eventTypeHypercardCardV2},
 		ItemID:    s.itemID,
 		Title:     title,
-		Template:  template,
+		Name:      name,
 		Data:      payloadToMap(snap),
 	})
 	return evs
 }
+
+type inventorySuggestionsSession struct {
+	ctx     context.Context
+	itemID  string
+	ctrl    *parsehelpers.YAMLController[inventorySuggestionsPayload]
+	started bool
+}
+
+// Old inventoryCardSession methods removed (HC-036 hard cutover)
 
 func (s *inventorySuggestionsSession) OnStart(context.Context) []events.Event {
 	return nil
@@ -451,7 +486,7 @@ func NewInventoryEventSinkWrapper(baseCtx context.Context) webchat.EventSinkWrap
 				Debug:     false,
 			},
 			&inventoryWidgetExtractor{},
-			&inventoryCardProposalExtractor{},
+			&inventoryRuntimeCardExtractor{},
 			&inventorySuggestionsExtractor{},
 		), nil
 	}

@@ -80,32 +80,127 @@ func TestWidgetExtractor_MalformedBlockEmitsError(t *testing.T) {
 	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardWidgetError), 1)
 }
 
-func TestCardExtractor_StartAndReady(t *testing.T) {
+func TestRuntimeCardExtractor_ValidPayload(t *testing.T) {
 	RegisterInventoryHypercardExtensions()
 
 	col := &collectorSink{}
 	sink := structuredsink.NewFilteringSink(col, structuredsink.Options{
 		Malformed: structuredsink.MalformedErrorEvents,
-	}, &inventoryCardProposalExtractor{})
+	}, &inventoryRuntimeCardExtractor{})
 
 	meta := events.EventMetadata{ID: uuid.New()}
-	full := "<hypercard:cardproposal:v1>\n```yaml\n" +
-		"template: reportViewer\n" +
-		"title: Inventory Report Card\n" +
+	full := "<hypercard:card:v2>\n```yaml\n" +
+		"name: Low Stock Items\n" +
+		"title: Items Below Reorder Threshold\n" +
 		"artifact:\n" +
-		"  id: inv-report\n" +
+		"  id: low-stock-drilldown\n" +
 		"  data:\n" +
-		"    totalItems: 10\n" +
-		"window:\n" +
-		"  dedupe_key: inv-report-card\n" +
+		"    threshold: 5\n" +
+		"card:\n" +
+		"  id: lowStockDrilldown\n" +
+		"  code: |-\n" +
+		"    ({ ui }) => ({\n" +
+		"      render({ globalState }) {\n" +
+		"        return ui.panel([ui.text(\"Low Stock\")]);\n" +
+		"      }\n" +
+		"    })\n" +
 		"```\n" +
-		"</hypercard:cardproposal:v1>"
+		"</hypercard:card:v2>"
 
 	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, full, full)))
 	require.NoError(t, sink.PublishEvent(events.NewFinalEvent(meta, full)))
 
 	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardCardStart), 1)
-	require.Equal(t, 1, countEventsByType(col.events, eventTypeHypercardCardProposalV1))
+	require.Equal(t, 1, countEventsByType(col.events, eventTypeHypercardCardV2))
+	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardCardError))
+}
+
+func TestRuntimeCardExtractor_MissingCardCode(t *testing.T) {
+	RegisterInventoryHypercardExtensions()
+
+	col := &collectorSink{}
+	sink := structuredsink.NewFilteringSink(col, structuredsink.Options{
+		Malformed: structuredsink.MalformedErrorEvents,
+	}, &inventoryRuntimeCardExtractor{})
+
+	meta := events.EventMetadata{ID: uuid.New()}
+	full := "<hypercard:card:v2>\n```yaml\n" +
+		"name: Missing Code\n" +
+		"title: A Card Without Code\n" +
+		"artifact:\n" +
+		"  id: missing-code\n" +
+		"  data: {}\n" +
+		"card:\n" +
+		"  id: missingCode\n" +
+		"```\n" +
+		"</hypercard:card:v2>"
+
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, full, full)))
+	require.NoError(t, sink.PublishEvent(events.NewFinalEvent(meta, full)))
+
+	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardCardError), 1)
+	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardCardV2))
+}
+
+func TestRuntimeCardExtractor_MissingCardId(t *testing.T) {
+	RegisterInventoryHypercardExtensions()
+
+	col := &collectorSink{}
+	sink := structuredsink.NewFilteringSink(col, structuredsink.Options{
+		Malformed: structuredsink.MalformedErrorEvents,
+	}, &inventoryRuntimeCardExtractor{})
+
+	meta := events.EventMetadata{ID: uuid.New()}
+	full := "<hypercard:card:v2>\n```yaml\n" +
+		"name: Missing ID\n" +
+		"title: A Card Without ID\n" +
+		"artifact:\n" +
+		"  id: missing-id\n" +
+		"  data: {}\n" +
+		"card:\n" +
+		"  code: |-\n" +
+		"    ({ ui }) => ({ render() { return ui.text(\"hi\"); } })\n" +
+		"```\n" +
+		"</hypercard:card:v2>"
+
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, full, full)))
+	require.NoError(t, sink.PublishEvent(events.NewFinalEvent(meta, full)))
+
+	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardCardError), 1)
+	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardCardV2))
+}
+
+func TestRuntimeCardExtractor_StreamingName(t *testing.T) {
+	RegisterInventoryHypercardExtensions()
+
+	col := &collectorSink{}
+	sink := structuredsink.NewFilteringSink(col, structuredsink.Options{
+		Malformed: structuredsink.MalformedErrorEvents,
+	}, &inventoryRuntimeCardExtractor{})
+
+	meta := events.EventMetadata{ID: uuid.New()}
+	// First chunk: just name and title, no code yet
+	chunk1 := "<hypercard:card:v2>\n```yaml\nname: Low Stock Items\ntitle: Items Below Threshold\n"
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, chunk1, chunk1)))
+	// Name should be available, so card.start should fire
+	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardCardStart), 1)
+
+	// Full payload
+	full := chunk1 +
+		"artifact:\n" +
+		"  id: low-stock\n" +
+		"  data: {}\n" +
+		"card:\n" +
+		"  id: lowStock\n" +
+		"  code: |-\n" +
+		"    ({ ui }) => ({ render() { return ui.text(\"hi\"); } })\n" +
+		"```\n" +
+		"</hypercard:card:v2>"
+	chunk2 := strings.TrimPrefix(full, chunk1)
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, chunk2, full)))
+	require.NoError(t, sink.PublishEvent(events.NewFinalEvent(meta, full)))
+
+	require.Equal(t, 1, countEventsByType(col.events, eventTypeHypercardCardV2))
 	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardCardError))
 }
 
@@ -174,7 +269,7 @@ func TestArtifactGeneratorMiddleware_NoMissingErrorsWhenTagsPresent(t *testing.T
 	turn := &turns.Turn{
 		ID: "turn-2",
 		Blocks: []turns.Block{
-			turns.NewAssistantTextBlock("<hypercard:widget:v1></hypercard:widget:v1>\n<hypercard:cardproposal:v1></hypercard:cardproposal:v1>"),
+			turns.NewAssistantTextBlock("<hypercard:widget:v1></hypercard:widget:v1>\n<hypercard:card:v2></hypercard:card:v2>"),
 		},
 	}
 	_, err := mw(func(_ context.Context, t *turns.Turn) (*turns.Turn, error) {
