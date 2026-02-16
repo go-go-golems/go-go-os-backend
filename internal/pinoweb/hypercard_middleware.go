@@ -14,6 +14,10 @@ type InventoryArtifactPolicyConfig struct {
 	Instructions string
 }
 
+type InventorySuggestionsPolicyConfig struct {
+	Instructions string
+}
+
 type InventoryArtifactGeneratorConfig struct {
 	RequireWidget bool
 	RequireCard   bool
@@ -50,6 +54,23 @@ func defaultArtifactPolicyInstructions() string {
 		"- Use only YAML inside the tags.\n")
 }
 
+func defaultSuggestionsPolicyInstructions() string {
+	return strings.TrimSpace("" +
+		"Optional: when useful, you can emit follow-up suggestion chips in this exact format:\n\n" +
+		"<hypercard:suggestions:v1>\n" +
+		"```yaml\n" +
+		"suggestions:\n" +
+		"  - Show current inventory status\n" +
+		"  - What items are low stock?\n" +
+		"  - Summarize today sales\n" +
+		"```\n" +
+		"</hypercard:suggestions:v1>\n\n" +
+		"Rules:\n" +
+		"- This block is optional.\n" +
+		"- Include 1 to 5 concise suggestions.\n" +
+		"- Use plain language phrasing suitable for quick follow-up prompts.\n")
+}
+
 func NewInventoryArtifactPolicyMiddleware(cfg InventoryArtifactPolicyConfig) middleware.Middleware {
 	instructions := strings.TrimSpace(cfg.Instructions)
 	if instructions == "" {
@@ -61,6 +82,22 @@ func NewInventoryArtifactPolicyMiddleware(cfg InventoryArtifactPolicyConfig) mid
 				t = &turns.Turn{}
 			}
 			upsertPolicySystemBlock(t, instructions)
+			return next(ctx, t)
+		}
+	}
+}
+
+func NewInventorySuggestionsPolicyMiddleware(cfg InventorySuggestionsPolicyConfig) middleware.Middleware {
+	instructions := strings.TrimSpace(cfg.Instructions)
+	if instructions == "" {
+		instructions = defaultSuggestionsPolicyInstructions()
+	}
+	return func(next middleware.HandlerFunc) middleware.HandlerFunc {
+		return func(ctx context.Context, t *turns.Turn) (*turns.Turn, error) {
+			if t == nil {
+				t = &turns.Turn{}
+			}
+			upsertSystemBlockByMiddleware(t, instructions, hypercardSuggestionsMiddlewareName)
 			return next(ctx, t)
 		}
 	}
@@ -119,7 +156,15 @@ func NewInventoryArtifactGeneratorMiddleware(cfg InventoryArtifactGeneratorConfi
 }
 
 func upsertPolicySystemBlock(t *turns.Turn, instructions string) {
+	upsertSystemBlockByMiddleware(t, instructions, hypercardPolicyMiddlewareName)
+}
+
+func upsertSystemBlockByMiddleware(t *turns.Turn, instructions string, middlewareName string) {
 	if t == nil {
+		return
+	}
+	middlewareName = strings.TrimSpace(middlewareName)
+	if middlewareName == "" {
 		return
 	}
 
@@ -129,7 +174,7 @@ func upsertPolicySystemBlock(t *turns.Turn, instructions string) {
 			continue
 		}
 		mwName, ok, err := turns.KeyBlockMetaMiddleware.Get(b.Metadata)
-		if err != nil || !ok || mwName != hypercardPolicyMiddlewareName {
+		if err != nil || !ok || mwName != middlewareName {
 			continue
 		}
 		if b.Payload == nil {
@@ -140,7 +185,7 @@ func upsertPolicySystemBlock(t *turns.Turn, instructions string) {
 	}
 
 	newBlock := turns.NewSystemTextBlock(instructions)
-	_ = turns.KeyBlockMetaMiddleware.Set(&newBlock.Metadata, hypercardPolicyMiddlewareName)
+	_ = turns.KeyBlockMetaMiddleware.Set(&newBlock.Metadata, middlewareName)
 
 	insertAt := len(t.Blocks)
 	for i, b := range t.Blocks {

@@ -50,6 +50,24 @@ func (e *inventoryCardProposalExtractor) NewSession(ctx context.Context, _ event
 	}
 }
 
+type inventorySuggestionsExtractor struct{}
+
+func (e *inventorySuggestionsExtractor) TagPackage() string { return "hypercard" }
+func (e *inventorySuggestionsExtractor) TagType() string    { return "suggestions" }
+func (e *inventorySuggestionsExtractor) TagVersion() string { return "v1" }
+func (e *inventorySuggestionsExtractor) NewSession(ctx context.Context, _ events.EventMetadata, itemID string) structuredsink.ExtractorSession {
+	return &inventorySuggestionsSession{
+		ctx:    ctx,
+		itemID: itemID,
+		ctrl: parsehelpers.NewDebouncedYAML[inventorySuggestionsPayload](parsehelpers.DebounceConfig{
+			SnapshotEveryBytes: 128,
+			SnapshotOnNewline:  true,
+			ParseTimeout:       25 * time.Millisecond,
+			MaxBytes:           32 << 10,
+		}),
+	}
+}
+
 type inventoryArtifactPayload struct {
 	ID   string         `yaml:"id" json:"id"`
 	Data map[string]any `yaml:"data" json:"data"`
@@ -67,6 +85,10 @@ type inventoryCardProposalPayload struct {
 	Title    string                   `yaml:"title" json:"title"`
 	Artifact inventoryArtifactPayload `yaml:"artifact" json:"artifact"`
 	Window   map[string]any           `yaml:"window" json:"window"`
+}
+
+type inventorySuggestionsPayload struct {
+	Suggestions []string `yaml:"suggestions" json:"suggestions"`
 }
 
 type inventoryWidgetSession struct {
@@ -192,6 +214,13 @@ type inventoryCardSession struct {
 	lastValid *inventoryCardProposalPayload
 }
 
+type inventorySuggestionsSession struct {
+	ctx     context.Context
+	itemID  string
+	ctrl    *parsehelpers.YAMLController[inventorySuggestionsPayload]
+	started bool
+}
+
 func (s *inventoryCardSession) OnStart(context.Context) []events.Event {
 	return nil
 }
@@ -298,6 +327,101 @@ func (s *inventoryCardSession) OnCompleted(ctx context.Context, raw []byte, succ
 	return evs
 }
 
+func (s *inventorySuggestionsSession) OnStart(context.Context) []events.Event {
+	return nil
+}
+
+func (s *inventorySuggestionsSession) OnRaw(ctx context.Context, chunk []byte) []events.Event {
+	if s.ctrl == nil {
+		return nil
+	}
+	snap, err := s.ctrl.FeedBytes(chunk)
+	if err != nil || snap == nil {
+		return nil
+	}
+	suggestions := normalizeSuggestions(snap.Suggestions)
+	if len(suggestions) == 0 {
+		return nil
+	}
+	if !s.started {
+		s.started = true
+		return []events.Event{&HypercardSuggestionsStartEvent{
+			EventImpl:   events.EventImpl{Type_: eventTypeHypercardSuggestionsStart},
+			ItemID:      s.itemID,
+			Suggestions: suggestions,
+		}}
+	}
+	return []events.Event{&HypercardSuggestionsUpdateEvent{
+		EventImpl:   events.EventImpl{Type_: eventTypeHypercardSuggestionsUpdate},
+		ItemID:      s.itemID,
+		Suggestions: suggestions,
+	}}
+}
+
+func (s *inventorySuggestionsSession) OnCompleted(ctx context.Context, raw []byte, success bool, err error) []events.Event {
+	if err != nil {
+		return []events.Event{&HypercardSuggestionsErrorEvent{
+			EventImpl: events.EventImpl{Type_: eventTypeHypercardSuggestionsError},
+			ItemID:    s.itemID,
+			Error:     err.Error(),
+		}}
+	}
+	if s.ctrl == nil {
+		return nil
+	}
+	snap, parseErr := s.ctrl.FinalBytes(raw)
+	if parseErr != nil {
+		return []events.Event{&HypercardSuggestionsErrorEvent{
+			EventImpl: events.EventImpl{Type_: eventTypeHypercardSuggestionsError},
+			ItemID:    s.itemID,
+			Error:     parseErr.Error(),
+		}}
+	}
+	if snap == nil {
+		return nil
+	}
+	suggestions := normalizeSuggestions(snap.Suggestions)
+	if len(suggestions) == 0 {
+		return nil
+	}
+	evs := []events.Event{}
+	if !s.started {
+		s.started = true
+		evs = append(evs, &HypercardSuggestionsStartEvent{
+			EventImpl:   events.EventImpl{Type_: eventTypeHypercardSuggestionsStart},
+			ItemID:      s.itemID,
+			Suggestions: suggestions,
+		})
+	}
+	evs = append(evs, &HypercardSuggestionsReadyEvent{
+		EventImpl:   events.EventImpl{Type_: eventTypeHypercardSuggestionsV1},
+		ItemID:      s.itemID,
+		Suggestions: suggestions,
+	})
+	return evs
+}
+
+func normalizeSuggestions(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		k := strings.ToLower(v)
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, v)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
 func payloadToMap(v any) map[string]any {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -328,6 +452,7 @@ func NewInventoryEventSinkWrapper(baseCtx context.Context) webchat.EventSinkWrap
 			},
 			&inventoryWidgetExtractor{},
 			&inventoryCardProposalExtractor{},
+			&inventorySuggestionsExtractor{},
 		), nil
 	}
 }

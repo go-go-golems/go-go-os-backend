@@ -56,11 +56,21 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 			}
 			return NewInventoryArtifactPolicyMiddleware(InventoryArtifactPolicyConfig{})
 		},
+		hypercardSuggestionsMiddlewareName: func(cfg any) gepmw.Middleware {
+			if c, ok := cfg.(InventorySuggestionsPolicyConfig); ok {
+				return NewInventorySuggestionsPolicyMiddleware(c)
+			}
+			return NewInventorySuggestionsPolicyMiddleware(InventorySuggestionsPolicyConfig{})
+		},
 	}
 	middlewares := []infruntime.MiddlewareUse{
 		{
 			Name:   hypercardPolicyMiddlewareName,
 			Config: InventoryArtifactPolicyConfig{},
+		},
+		{
+			Name:   hypercardSuggestionsMiddlewareName,
+			Config: InventorySuggestionsPolicyConfig{},
 		},
 	}
 

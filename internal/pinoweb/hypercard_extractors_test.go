@@ -109,6 +109,33 @@ func TestCardExtractor_StartAndReady(t *testing.T) {
 	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardCardError))
 }
 
+func TestSuggestionsExtractor_ProgressiveStartUpdateReady(t *testing.T) {
+	RegisterInventoryHypercardExtensions()
+
+	col := &collectorSink{}
+	sink := structuredsink.NewFilteringSink(col, structuredsink.Options{
+		Malformed: structuredsink.MalformedErrorEvents,
+	}, &inventorySuggestionsExtractor{})
+
+	meta := events.EventMetadata{ID: uuid.New()}
+	chunk1 := "<hypercard:suggestions:v1>\n```yaml\nsuggestions:\n  - Show current inventory status\n"
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, chunk1, chunk1)))
+	require.Equal(t, 1, countEventsByType(col.events, eventTypeHypercardSuggestionsStart))
+
+	full := chunk1 +
+		"  - What items are low stock?\n" +
+		"  - Summarize today sales\n" +
+		"```\n" +
+		"</hypercard:suggestions:v1>"
+	chunk2 := strings.TrimPrefix(full, chunk1)
+	require.NoError(t, sink.PublishEvent(events.NewPartialCompletionEvent(meta, chunk2, full)))
+	require.GreaterOrEqual(t, countEventsByType(col.events, eventTypeHypercardSuggestionsUpdate), 1)
+
+	require.NoError(t, sink.PublishEvent(events.NewFinalEvent(meta, full)))
+	require.Equal(t, 1, countEventsByType(col.events, eventTypeHypercardSuggestionsV1))
+	require.Equal(t, 0, countEventsByType(col.events, eventTypeHypercardSuggestionsError))
+}
+
 func TestArtifactGeneratorMiddleware_EmitsMissingErrorsNoFallback(t *testing.T) {
 	RegisterInventoryHypercardExtensions()
 
