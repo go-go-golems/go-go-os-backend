@@ -1,0 +1,344 @@
+package pinoweb
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync"
+
+	"github.com/go-go-golems/geppetto/pkg/events"
+	timelinepb "github.com/go-go-golems/pinocchio/pkg/sem/pb/proto/sem/timeline"
+	semregistry "github.com/go-go-golems/pinocchio/pkg/sem/registry"
+	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+const (
+	eventTypeHypercardWidgetStart    events.EventType = "hypercard.widget.start"
+	eventTypeHypercardWidgetUpdate   events.EventType = "hypercard.widget.update"
+	eventTypeHypercardWidgetV1       events.EventType = "hypercard.widget.v1"
+	eventTypeHypercardWidgetError    events.EventType = "hypercard.widget.error"
+	eventTypeHypercardCardStart      events.EventType = "hypercard.card.start"
+	eventTypeHypercardCardUpdate     events.EventType = "hypercard.card.update"
+	eventTypeHypercardCardProposalV1 events.EventType = "hypercard.card_proposal.v1"
+	eventTypeHypercardCardError      events.EventType = "hypercard.card.error"
+	hypercardPolicyMiddlewareName                     = "inventory_artifact_policy"
+	hypercardGeneratorMiddlewareName                  = "inventory_artifact_generator"
+)
+
+type HypercardWidgetStartEvent struct {
+	events.EventImpl
+	ItemID     string `json:"item_id"`
+	Title      string `json:"title,omitempty"`
+	WidgetType string `json:"widget_type,omitempty"`
+}
+
+type HypercardWidgetUpdateEvent struct {
+	events.EventImpl
+	ItemID     string `json:"item_id"`
+	Title      string `json:"title,omitempty"`
+	WidgetType string `json:"widget_type,omitempty"`
+	Data       any    `json:"data,omitempty"`
+}
+
+type HypercardWidgetReadyEvent struct {
+	events.EventImpl
+	ItemID     string `json:"item_id"`
+	Title      string `json:"title,omitempty"`
+	WidgetType string `json:"widget_type,omitempty"`
+	Data       any    `json:"data,omitempty"`
+}
+
+type HypercardWidgetErrorEvent struct {
+	events.EventImpl
+	ItemID string `json:"item_id"`
+	Error  string `json:"error"`
+}
+
+type HypercardCardStartEvent struct {
+	events.EventImpl
+	ItemID   string `json:"item_id"`
+	Title    string `json:"title,omitempty"`
+	Template string `json:"template,omitempty"`
+}
+
+type HypercardCardUpdateEvent struct {
+	events.EventImpl
+	ItemID   string `json:"item_id"`
+	Title    string `json:"title,omitempty"`
+	Template string `json:"template,omitempty"`
+	Data     any    `json:"data,omitempty"`
+}
+
+type HypercardCardProposalReadyEvent struct {
+	events.EventImpl
+	ItemID   string `json:"item_id"`
+	Title    string `json:"title,omitempty"`
+	Template string `json:"template,omitempty"`
+	Data     any    `json:"data,omitempty"`
+}
+
+type HypercardCardErrorEvent struct {
+	events.EventImpl
+	ItemID string `json:"item_id"`
+	Error  string `json:"error"`
+}
+
+var registerHypercardExtensionsOnce sync.Once
+
+func RegisterInventoryHypercardExtensions() {
+	registerHypercardExtensionsOnce.Do(func() {
+		registerHypercardEventFactories()
+		registerHypercardSEMMappings()
+		registerHypercardTimelineHandlers()
+	})
+}
+
+func registerHypercardEventFactories() {
+	_ = events.RegisterEventFactory(string(eventTypeHypercardWidgetStart), func() events.Event {
+		return &HypercardWidgetStartEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardWidgetStart}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardWidgetUpdate), func() events.Event {
+		return &HypercardWidgetUpdateEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardWidgetUpdate}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardWidgetV1), func() events.Event {
+		return &HypercardWidgetReadyEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardWidgetV1}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardWidgetError), func() events.Event {
+		return &HypercardWidgetErrorEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardWidgetError}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardCardStart), func() events.Event {
+		return &HypercardCardStartEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardStart}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardCardUpdate), func() events.Event {
+		return &HypercardCardUpdateEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardUpdate}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardCardProposalV1), func() events.Event {
+		return &HypercardCardProposalReadyEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardProposalV1}}
+	})
+	_ = events.RegisterEventFactory(string(eventTypeHypercardCardError), func() events.Event {
+		return &HypercardCardErrorEvent{EventImpl: events.EventImpl{Type_: eventTypeHypercardCardError}}
+	})
+}
+
+func registerHypercardSEMMappings() {
+	semregistry.RegisterByType[*HypercardWidgetStartEvent](func(ev *HypercardWidgetStartEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.widget.start", ev.ItemID, map[string]any{
+			"itemId":     ev.ItemID,
+			"title":      ev.Title,
+			"widgetType": ev.WidgetType,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardWidgetUpdateEvent](func(ev *HypercardWidgetUpdateEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.widget.update", ev.ItemID, map[string]any{
+			"itemId":     ev.ItemID,
+			"title":      ev.Title,
+			"widgetType": ev.WidgetType,
+			"data":       ev.Data,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardWidgetReadyEvent](func(ev *HypercardWidgetReadyEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.widget.v1", ev.ItemID, map[string]any{
+			"itemId":     ev.ItemID,
+			"title":      ev.Title,
+			"widgetType": ev.WidgetType,
+			"data":       ev.Data,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardWidgetErrorEvent](func(ev *HypercardWidgetErrorEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.widget.error", ev.ItemID, map[string]any{
+			"itemId": ev.ItemID,
+			"error":  ev.Error,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardCardStartEvent](func(ev *HypercardCardStartEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.card.start", ev.ItemID, map[string]any{
+			"itemId":   ev.ItemID,
+			"title":    ev.Title,
+			"template": ev.Template,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardCardUpdateEvent](func(ev *HypercardCardUpdateEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.card.update", ev.ItemID, map[string]any{
+			"itemId":   ev.ItemID,
+			"title":    ev.Title,
+			"template": ev.Template,
+			"data":     ev.Data,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardCardProposalReadyEvent](func(ev *HypercardCardProposalReadyEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.card_proposal.v1", ev.ItemID, map[string]any{
+			"itemId":   ev.ItemID,
+			"title":    ev.Title,
+			"template": ev.Template,
+			"data":     ev.Data,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+	semregistry.RegisterByType[*HypercardCardErrorEvent](func(ev *HypercardCardErrorEvent) ([][]byte, error) {
+		frame, err := semFrame("hypercard.card.error", ev.ItemID, map[string]any{
+			"itemId": ev.ItemID,
+			"error":  ev.Error,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{frame}, nil
+	})
+}
+
+func registerHypercardTimelineHandlers() {
+	registerStatus := func(eventType string, statusType string, textFn func(map[string]any) string) {
+		webchat.RegisterTimelineHandler(eventType, func(ctx context.Context, p *webchat.TimelineProjector, ev webchat.TimelineSemEvent, _ int64) error {
+			data := parseTimelineData(ev.Data)
+			entityID := ev.ID + ":status"
+			return p.Upsert(ctx, ev.Seq, &timelinepb.TimelineEntityV1{
+				Id:   entityID,
+				Kind: "status",
+				Snapshot: &timelinepb.TimelineEntityV1_Status{
+					Status: &timelinepb.StatusSnapshotV1{
+						SchemaVersion: 1,
+						Type:          statusType,
+						Text:          textFn(data),
+					},
+				},
+			})
+		})
+	}
+
+	registerStatus("hypercard.widget.start", "info", func(data map[string]any) string {
+		title := stringFromMap(data, "title")
+		if title == "" {
+			return "Building widget..."
+		}
+		return "Building widget: " + title
+	})
+	registerStatus("hypercard.widget.update", "info", func(data map[string]any) string {
+		title := stringFromMap(data, "title")
+		if title == "" {
+			return "Updating widget..."
+		}
+		return "Updating widget: " + title
+	})
+	registerStatus("hypercard.widget.error", "error", func(data map[string]any) string {
+		msg := stringFromMap(data, "error")
+		if msg == "" {
+			msg = "Widget generation failed"
+		}
+		return msg
+	})
+	registerStatus("hypercard.card.start", "info", func(data map[string]any) string {
+		title := stringFromMap(data, "title")
+		if title == "" {
+			return "Building card proposal..."
+		}
+		return "Building card proposal: " + title
+	})
+	registerStatus("hypercard.card.update", "info", func(data map[string]any) string {
+		title := stringFromMap(data, "title")
+		if title == "" {
+			return "Updating card proposal..."
+		}
+		return "Updating card proposal: " + title
+	})
+	registerStatus("hypercard.card.error", "error", func(data map[string]any) string {
+		msg := stringFromMap(data, "error")
+		if msg == "" {
+			msg = "Card proposal generation failed"
+		}
+		return msg
+	})
+
+	registerResult := func(eventType string, customKind string) {
+		webchat.RegisterTimelineHandler(eventType, func(ctx context.Context, p *webchat.TimelineProjector, ev webchat.TimelineSemEvent, _ int64) error {
+			data := parseTimelineData(ev.Data)
+			resultStruct, err := structpb.NewStruct(data)
+			if err != nil {
+				resultStruct, _ = structpb.NewStruct(map[string]any{"raw": string(ev.Data)})
+			}
+			return p.Upsert(ctx, ev.Seq, &timelinepb.TimelineEntityV1{
+				Id:   ev.ID + ":result",
+				Kind: "tool_result",
+				Snapshot: &timelinepb.TimelineEntityV1_ToolResult{
+					ToolResult: &timelinepb.ToolResultSnapshotV1{
+						SchemaVersion: 1,
+						ToolCallId:    ev.ID,
+						Result:        resultStruct,
+						ResultRaw:     string(ev.Data),
+						CustomKind:    customKind,
+					},
+				},
+			})
+		})
+	}
+
+	registerResult("hypercard.widget.v1", "hypercard.widget.v1")
+	registerResult("hypercard.card_proposal.v1", "hypercard.card_proposal.v1")
+}
+
+func parseTimelineData(raw json.RawMessage) map[string]any {
+	var data map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &data)
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	return data
+}
+
+func semFrame(eventType, id string, data map[string]any) ([]byte, error) {
+	if strings.TrimSpace(id) == "" {
+		id = "hypercard"
+	}
+	return json.Marshal(map[string]any{
+		"sem": true,
+		"event": map[string]any{
+			"type": eventType,
+			"id":   id,
+			"data": data,
+		},
+	})
+}
+
+func stringFromMap(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}

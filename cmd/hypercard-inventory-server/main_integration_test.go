@@ -18,6 +18,7 @@ import (
 	infruntime "github.com/go-go-golems/pinocchio/pkg/inference/runtime"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,36 @@ type integrationNoopEngine struct{}
 
 func (integrationNoopEngine) RunInference(_ context.Context, t *turns.Turn) (*turns.Turn, error) {
 	return t, nil
+}
+
+type integrationStructuredEngine struct{}
+
+func (integrationStructuredEngine) RunInference(ctx context.Context, t *turns.Turn) (*turns.Turn, error) {
+	meta := events.EventMetadata{ID: uuid.New()}
+	events.PublishEventToContext(ctx, events.NewStartEvent(meta))
+
+	part1 := "Inventory snapshot generated.\n<hypercard:widget:v1>\n```yaml\ntype: report\n"
+	cumulative := part1
+	events.PublishEventToContext(ctx, events.NewPartialCompletionEvent(meta, part1, cumulative))
+
+	part2 := "" +
+		"title: Integration Widget\n" +
+		"artifact:\n" +
+		"  id: integration-widget\n" +
+		"  data:\n" +
+		"    totalItems: 10\n" +
+		"```\n" +
+		"</hypercard:widget:v1>"
+	cumulative += part2
+	events.PublishEventToContext(ctx, events.NewPartialCompletionEvent(meta, part2, cumulative))
+	events.PublishEventToContext(ctx, events.NewFinalEvent(meta, cumulative))
+
+	out := t.Clone()
+	if out == nil {
+		out = &turns.Turn{}
+	}
+	turns.AppendBlock(out, turns.NewAssistantTextBlock(cumulative))
+	return out, nil
 }
 
 type integrationNoopSink struct{}
@@ -56,7 +87,14 @@ func newIntegrationServer(t *testing.T) *httptest.Server {
 		}, nil
 	})
 
-	webchatSrv, err := webchat.NewServer(context.Background(), parsed, staticFS, webchat.WithRuntimeComposer(runtimeComposer))
+	pinoweb.RegisterInventoryHypercardExtensions()
+	webchatSrv, err := webchat.NewServer(
+		context.Background(),
+		parsed,
+		staticFS,
+		webchat.WithRuntimeComposer(runtimeComposer),
+		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(context.Background())),
+	)
 	require.NoError(t, err)
 
 	resolver := pinoweb.NewStrictRequestResolver("inventory")
@@ -79,6 +117,95 @@ func newIntegrationServer(t *testing.T) *httptest.Server {
 	appMux.Handle("/", webchatSrv.UIHandler())
 
 	return httptest.NewServer(appMux)
+}
+
+func TestWSHandler_EmitsHypercardLifecycleEvents(t *testing.T) {
+	parsed := values.New()
+	staticFS := fstest.MapFS{
+		"static/index.html": {Data: []byte("<html><body>inventory</body></html>")},
+	}
+	runtimeComposer := infruntime.RuntimeComposerFunc(func(_ context.Context, req infruntime.RuntimeComposeRequest) (infruntime.RuntimeArtifacts, error) {
+		runtimeKey := strings.TrimSpace(req.RuntimeKey)
+		if runtimeKey == "" {
+			runtimeKey = "inventory"
+		}
+		return infruntime.RuntimeArtifacts{
+			Engine:             integrationStructuredEngine{},
+			Sink:               nil,
+			RuntimeKey:         runtimeKey,
+			RuntimeFingerprint: "fp-" + runtimeKey,
+			SeedSystemPrompt:   "seed",
+		}, nil
+	})
+
+	pinoweb.RegisterInventoryHypercardExtensions()
+	webchatSrv, err := webchat.NewServer(
+		context.Background(),
+		parsed,
+		staticFS,
+		webchat.WithRuntimeComposer(runtimeComposer),
+		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(context.Background())),
+	)
+	require.NoError(t, err)
+
+	resolver := pinoweb.NewStrictRequestResolver("inventory")
+	chatHandler := webhttp.NewChatHandler(webchatSrv.ChatService(), resolver)
+	wsHandler := webhttp.NewWSHandler(
+		webchatSrv.StreamHub(),
+		resolver,
+		websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+	)
+	appMux := http.NewServeMux()
+	appMux.HandleFunc("/chat", chatHandler)
+	appMux.HandleFunc("/chat/", chatHandler)
+	appMux.HandleFunc("/ws", wsHandler)
+	appMux.Handle("/api/", webchatSrv.APIHandler())
+	appMux.Handle("/", webchatSrv.UIHandler())
+
+	srv := httptest.NewServer(appMux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?conv_id=conv-progress-1"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, helloFrame, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, "ws.hello", integrationSemEventType(helloFrame))
+
+	reqBody := []byte(`{"prompt":"run integration structured flow","conv_id":"conv-progress-1"}`)
+	resp, err := http.Post(srv.URL+"/chat", "application/json", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	seenWidgetStart := false
+	seenWidgetReady := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(500*time.Millisecond)))
+		_, frame, readErr := conn.ReadMessage()
+		if readErr != nil {
+			if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			break
+		}
+		switch integrationSemEventType(frame) {
+		case "hypercard.widget.start":
+			seenWidgetStart = true
+		case "hypercard.widget.v1":
+			seenWidgetReady = true
+		}
+		if seenWidgetStart && seenWidgetReady {
+			break
+		}
+	}
+
+	require.True(t, seenWidgetStart, "expected hypercard.widget.start over websocket")
+	require.True(t, seenWidgetReady, "expected hypercard.widget.v1 over websocket")
 }
 
 func TestChatHandler_StartedResponse(t *testing.T) {

@@ -109,6 +109,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
 		AllowedTools: append([]string(nil), inventoryToolNames...),
 	})
+	pinoweb.RegisterInventoryHypercardExtensions()
 	requestResolver := pinoweb.NewStrictRequestResolver("inventory")
 
 	srv, err := webchat.NewServer(
@@ -116,6 +117,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		parsed,
 		staticFS,
 		webchat.WithRuntimeComposer(composer),
+		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(ctx)),
 		webchat.WithDebugRoutesEnabled(os.Getenv("PINOCCHIO_WEBCHAT_DEBUG") == "1"),
 	)
 	if err != nil {

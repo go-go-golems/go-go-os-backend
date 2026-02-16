@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	gepmw "github.com/go-go-golems/geppetto/pkg/inference/middleware"
 	"github.com/go-go-golems/geppetto/pkg/steps/ai/settings"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	infruntime "github.com/go-go-golems/pinocchio/pkg/inference/runtime"
@@ -48,7 +49,38 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 		systemPrompt = "You are an inventory assistant."
 	}
 
-	engine_, err := infruntime.ComposeEngineFromSettings(ctx, stepSettings.Clone(), systemPrompt, nil, map[string]infruntime.MiddlewareFactory{})
+	mwFactories := map[string]infruntime.MiddlewareFactory{
+		hypercardPolicyMiddlewareName: func(cfg any) gepmw.Middleware {
+			if c, ok := cfg.(InventoryArtifactPolicyConfig); ok {
+				return NewInventoryArtifactPolicyMiddleware(c)
+			}
+			return NewInventoryArtifactPolicyMiddleware(InventoryArtifactPolicyConfig{})
+		},
+		hypercardGeneratorMiddlewareName: func(cfg any) gepmw.Middleware {
+			if c, ok := cfg.(InventoryArtifactGeneratorConfig); ok {
+				return NewInventoryArtifactGeneratorMiddleware(c)
+			}
+			return NewInventoryArtifactGeneratorMiddleware(InventoryArtifactGeneratorConfig{
+				RequireWidget: true,
+				RequireCard:   true,
+			})
+		},
+	}
+	middlewares := []infruntime.MiddlewareUse{
+		{
+			Name:   hypercardPolicyMiddlewareName,
+			Config: InventoryArtifactPolicyConfig{},
+		},
+		{
+			Name: hypercardGeneratorMiddlewareName,
+			Config: InventoryArtifactGeneratorConfig{
+				RequireWidget: true,
+				RequireCard:   true,
+			},
+		},
+	}
+
+	engine_, err := infruntime.ComposeEngineFromSettings(ctx, stepSettings.Clone(), systemPrompt, middlewares, mwFactories)
 	if err != nil {
 		return infruntime.RuntimeArtifacts{}, errors.Wrap(err, "compose engine")
 	}
