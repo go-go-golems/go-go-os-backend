@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,6 +18,7 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	infruntime "github.com/go-go-golems/pinocchio/pkg/inference/runtime"
+	chatstore "github.com/go-go-golems/pinocchio/pkg/persistence/chatstore"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
 	"github.com/google/uuid"
@@ -68,6 +71,11 @@ func (integrationNoopSink) PublishEvent(events.Event) error { return nil }
 
 func newIntegrationServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return newIntegrationServerWithRouterOptions(t)
+}
+
+func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat.RouterOption) *httptest.Server {
+	t.Helper()
 
 	parsed := values.New()
 	staticFS := fstest.MapFS{
@@ -88,12 +96,17 @@ func newIntegrationServer(t *testing.T) *httptest.Server {
 	})
 
 	pinoweb.RegisterInventoryHypercardExtensions()
+	options := []webchat.RouterOption{
+		webchat.WithRuntimeComposer(runtimeComposer),
+		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(context.Background())),
+	}
+	options = append(options, extraOptions...)
+
 	webchatSrv, err := webchat.NewServer(
 		context.Background(),
 		parsed,
 		staticFS,
-		webchat.WithRuntimeComposer(runtimeComposer),
-		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(context.Background())),
+		options...,
 	)
 	require.NoError(t, err)
 
@@ -282,6 +295,58 @@ func TestTimelineEndpoint_ReturnsSnapshot(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	_, ok := payload["convId"]
 	require.True(t, ok, "expected timeline snapshot with convId")
+}
+
+func TestChatHandler_PersistsTurnSnapshotsWhenTurnStoreConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	turnsPath := filepath.Join(tmpDir, "turns.db")
+	turnsDSN, err := chatstore.SQLiteTurnDSNForFile(turnsPath)
+	require.NoError(t, err)
+
+	turnStore, err := chatstore.NewSQLiteTurnStore(turnsDSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = turnStore.Close() })
+
+	srv := newIntegrationServerWithRouterOptions(t, webchat.WithTurnStore(turnStore))
+	defer srv.Close()
+
+	const convID = "conv-turn-persist-1"
+	reqBody := []byte(`{"prompt":"persist turn snapshot test","conv_id":"` + convID + `"}`)
+	resp, err := http.Post(srv.URL+"/chat", "application/json", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Eventually(t, func() bool {
+		snapshots, listErr := turnStore.List(context.Background(), chatstore.TurnQuery{
+			ConvID: convID,
+			Limit:  20,
+		})
+		if listErr != nil {
+			return false
+		}
+		return len(snapshots) > 0
+	}, 6*time.Second, 100*time.Millisecond, "expected persisted turn snapshots")
+
+	snapshots, err := turnStore.List(context.Background(), chatstore.TurnQuery{
+		ConvID: convID,
+		Limit:  20,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshots)
+	require.FileExists(t, turnsPath)
+
+	seenFinalPhase := false
+	for _, snapshot := range snapshots {
+		if snapshot.Phase == "final" {
+			seenFinalPhase = true
+		}
+		require.NotEmpty(t, strings.TrimSpace(snapshot.Payload))
+	}
+	require.True(t, seenFinalPhase, "expected at least one final turn snapshot")
+
+	_, err = os.Stat(turnsPath)
+	require.NoError(t, err)
 }
 
 func integrationSemEventType(frame []byte) string {
