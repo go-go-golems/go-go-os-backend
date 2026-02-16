@@ -106,8 +106,11 @@ RENDER CONTEXT
   render({ cardState, sessionState, globalState })
 
   • cardState      — per-card key/value store (initially {}).
+                     Write via ctx.dispatchCardAction("patch", {...}).
+                     Use for card-local UI state (filters, selections, toggles).
   • sessionState   — per-session key/value store (shared across cards).
-  • globalState    — read-only snapshot of the full app state:
+                     Write via ctx.dispatchSessionAction("patch", {...}).
+  • globalState    — READ-ONLY snapshot of the full app state (never write to it):
       globalState.domains.inventory.items  — array of inventory Item objects
           Each item: { sku, name, qty, price, cost, category, tags }
       globalState.domains.sales.log        — array of SaleEntry objects
@@ -125,11 +128,18 @@ HANDLER CONTEXT
     ctx.cardState, ctx.sessionState, ctx.globalState  (read-only)
 
     ctx.dispatchCardAction(actionType, payload)
-        actionType: "patch" | "set" | "reset"
-        Example: ctx.dispatchCardAction("patch", { filter: "shoes" })
+        "patch"  — merges payload keys into state:
+                   ctx.dispatchCardAction("patch", { filter: "shoes" })
+        "set"    — sets a single deep path:
+                   ctx.dispatchCardAction("set", { path: "filter", value: "shoes" })
+        "reset"  — clears all card state:
+                   ctx.dispatchCardAction("reset")
+
+        Use "patch" for most cases. Use "set" only for deep paths.
 
     ctx.dispatchSessionAction(actionType, payload)
         Same action types as card actions, but session-scoped.
+        Use "patch" for simple key/value updates.
 
     ctx.dispatchDomainAction(domain, actionType, payload)
         Dispatches to a domain reducer.
