@@ -2,6 +2,7 @@ package pinoweb
 
 import (
 	"context"
+	_ "embed"
 	"strings"
 
 	"github.com/go-go-golems/geppetto/pkg/events"
@@ -9,6 +10,12 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/google/uuid"
 )
+
+//go:embed prompts/widget-policy.md
+var widgetPolicyPrompt string
+
+//go:embed prompts/suggestions-policy.md
+var suggestionsPolicyPrompt string
 
 type InventoryArtifactPolicyConfig struct {
 	Instructions string
@@ -24,41 +31,11 @@ type InventoryArtifactGeneratorConfig struct {
 }
 
 func defaultArtifactPolicyInstructions() string {
-	return strings.TrimSpace("" +
-		"When generating structured inventory artifacts, emit tags exactly in this format:\n\n" +
-		"<hypercard:widget:v1>\n" +
-		"```yaml\n" +
-		"type: report | item | table\n" +
-		"title: string\n" +
-		"artifact:\n" +
-		"  id: string\n" +
-		"  data: {}\n" +
-		"actions: []\n" +
-		"```\n" +
-		"</hypercard:widget:v1>\n\n" +
-		runtimeCardPromptInstructions() + "\n\n" +
-		"Rules:\n" +
-		"- First output a short plain-language summary sentence before any structured tag.\n" +
-		"- Do not invent fallback payloads if you cannot produce valid YAML.\n" +
-		"- Always provide non-empty title fields.\n" +
-		"- Use only YAML inside the tags.\n")
+	return strings.TrimSpace(widgetPolicyPrompt + "\n\n" + runtimeCardPrompt)
 }
 
 func defaultSuggestionsPolicyInstructions() string {
-	return strings.TrimSpace("" +
-		"Optional: when useful, you can emit follow-up suggestion chips in this exact format:\n\n" +
-		"<hypercard:suggestions:v1>\n" +
-		"```yaml\n" +
-		"suggestions:\n" +
-		"  - Show current inventory status\n" +
-		"  - What items are low stock?\n" +
-		"  - Summarize today sales\n" +
-		"```\n" +
-		"</hypercard:suggestions:v1>\n\n" +
-		"Rules:\n" +
-		"- This block is optional.\n" +
-		"- Include 1 to 5 concise suggestions.\n" +
-		"- Use plain language phrasing suitable for quick follow-up prompts.\n")
+	return strings.TrimSpace(suggestionsPolicyPrompt)
 }
 
 func NewInventoryArtifactPolicyMiddleware(cfg InventoryArtifactPolicyConfig) middleware.Middleware {

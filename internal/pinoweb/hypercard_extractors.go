@@ -32,7 +32,6 @@ func (e *inventoryWidgetExtractor) NewSession(ctx context.Context, _ events.Even
 	}
 }
 
-// inventoryCardProposalExtractor removed — replaced by inventoryRuntimeCardExtractor (HC-036)
 
 type inventoryRuntimeCardExtractor struct{}
 
@@ -80,13 +79,6 @@ type inventoryWidgetPayload struct {
 	Title    string                   `yaml:"title" json:"title"`
 	Artifact inventoryArtifactPayload `yaml:"artifact" json:"artifact"`
 	Actions  []map[string]any         `yaml:"actions" json:"actions"`
-}
-
-type inventoryCardProposalPayload struct {
-	Template string                   `yaml:"template" json:"template"`
-	Title    string                   `yaml:"title" json:"title"`
-	Artifact inventoryArtifactPayload `yaml:"artifact" json:"artifact"`
-	Window   map[string]any           `yaml:"window" json:"window"`
 }
 
 type inventoryRuntimeCardPayload struct {
@@ -218,7 +210,6 @@ func (s *inventoryWidgetSession) OnCompleted(ctx context.Context, raw []byte, su
 	return evs
 }
 
-// inventoryCardSession removed — replaced by inventoryRuntimeCardSession (HC-036)
 
 type inventoryRuntimeCardSession struct {
 	ctx       context.Context
@@ -360,7 +351,6 @@ type inventorySuggestionsSession struct {
 	started bool
 }
 
-// Old inventoryCardSession methods removed (HC-036 hard cutover)
 
 func (s *inventorySuggestionsSession) OnStart(context.Context) []events.Event {
 	return nil
