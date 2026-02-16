@@ -111,8 +111,7 @@ func registerInventorySearchItemsTool(reg geptools.ToolRegistry, store *inventor
 	def, err := geptools.NewToolFromFunc(
 		"inventory_search_items",
 		"Search inventory items by sku, name, category, or tags.",
-		func(in searchItemsInput) (searchItemsOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in searchItemsInput) (searchItemsOutput, error) {
 			limit := in.Limit
 			if limit <= 0 || limit > 200 {
 				limit = 20
@@ -137,8 +136,7 @@ func registerInventoryGetItemTool(reg geptools.ToolRegistry, store *inventorydb.
 	def, err := geptools.NewToolFromFunc(
 		"inventory_get_item",
 		"Fetch one item by SKU.",
-		func(in getItemInput) (getItemOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in getItemInput) (getItemOutput, error) {
 			sku := strings.TrimSpace(in.SKU)
 			if sku == "" {
 				return getItemOutput{}, errors.New("sku is required")
@@ -166,8 +164,7 @@ func registerInventoryLowStockTool(reg geptools.ToolRegistry, store *inventorydb
 	def, err := geptools.NewToolFromFunc(
 		"inventory_low_stock",
 		"List items with qty <= threshold.",
-		func(in lowStockInput) (lowStockOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in lowStockInput) (lowStockOutput, error) {
 			threshold := in.Threshold
 			if threshold <= 0 {
 				threshold = defaultLowStockThreshold
@@ -192,8 +189,7 @@ func registerInventoryReportTool(reg geptools.ToolRegistry, store *inventorydb.S
 	def, err := geptools.NewToolFromFunc(
 		"inventory_report",
 		"Generate an inventory report including summary, low stock items, out of stock items, and recent sales.",
-		func(in reportInput) (reportOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in reportInput) (reportOutput, error) {
 			threshold := in.Threshold
 			if threshold <= 0 {
 				threshold = defaultLowStockThreshold
@@ -223,8 +219,7 @@ func registerInventoryUpdateQtyTool(reg geptools.ToolRegistry, store *inventoryd
 	def, err := geptools.NewToolFromFunc(
 		"inventory_update_qty",
 		"Apply a signed quantity delta to a SKU and return the updated item.",
-		func(in updateQtyInput) (updateQtyOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in updateQtyInput) (updateQtyOutput, error) {
 			sku := strings.TrimSpace(in.SKU)
 			if sku == "" {
 				return updateQtyOutput{}, errors.New("sku is required")
@@ -249,8 +244,7 @@ func registerInventoryRecordSaleTool(reg geptools.ToolRegistry, store *inventory
 	def, err := geptools.NewToolFromFunc(
 		"inventory_record_sale",
 		"Record a sale for a SKU and decrement stock in one transaction.",
-		func(in recordSaleInput) (recordSaleOutput, error) {
-			ctx := context.Background()
+		func(ctx context.Context, in recordSaleInput) (recordSaleOutput, error) {
 			sku := strings.TrimSpace(in.SKU)
 			if sku == "" {
 				return recordSaleOutput{}, errors.New("sku is required")
