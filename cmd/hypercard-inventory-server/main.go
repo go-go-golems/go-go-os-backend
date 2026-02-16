@@ -24,6 +24,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
+	"github.com/go-go-golems/hypercard-inventory-chat/internal/inventorydb"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
 
@@ -35,7 +36,10 @@ type Command struct {
 }
 
 type serverSettings struct {
-	Root string `glazed:"root"`
+	Root                 string `glazed:"root"`
+	InventoryDB          string `glazed:"inventory-db"`
+	InventorySeedOnStart bool   `glazed:"inventory-seed-on-start"`
+	InventoryResetOnBoot bool   `glazed:"inventory-reset-on-start"`
 }
 
 func NewCommand() (*Command, error) {
@@ -58,6 +62,9 @@ func NewCommand() (*Command, error) {
 			fields.New("turns-dsn", fields.TypeString, fields.WithDefault(""), fields.WithHelp("SQLite DSN for durable turn snapshots (preferred over turns-db)")),
 			fields.New("turns-db", fields.TypeString, fields.WithDefault(""), fields.WithHelp("SQLite DB file path for durable turn snapshots")),
 			fields.New("timeline-inmem-max-entities", fields.TypeInteger, fields.WithDefault(1000), fields.WithHelp("In-memory timeline entity cap when no timeline DB is configured")),
+			fields.New("inventory-db", fields.TypeString, fields.WithDefault("./data/inventory.db"), fields.WithHelp("SQLite DB file path for inventory domain data")),
+			fields.New("inventory-seed-on-start", fields.TypeBool, fields.WithDefault(true), fields.WithHelp("Seed inventory domain data during startup")),
+			fields.New("inventory-reset-on-start", fields.TypeBool, fields.WithDefault(false), fields.WithHelp("Reset inventory domain tables before seeding")),
 		),
 		cmds.WithSections(geLayers...),
 	)
@@ -66,10 +73,41 @@ func NewCommand() (*Command, error) {
 }
 
 func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io.Writer) error {
+	cfg := &serverSettings{}
+	_ = parsed.DecodeSectionInto(values.DefaultSlug, cfg)
+
+	inventoryDBPath := strings.TrimSpace(cfg.InventoryDB)
+	if inventoryDBPath == "" {
+		inventoryDBPath = "./data/inventory.db"
+	}
+	sqliteDB, err := inventorydb.Open(inventoryDBPath)
+	if err != nil {
+		return errors.Wrap(err, "open inventory sqlite db")
+	}
+	defer func() { _ = sqliteDB.Close() }()
+
+	if err := inventorydb.Migrate(sqliteDB); err != nil {
+		return errors.Wrap(err, "migrate inventory sqlite db")
+	}
+	if cfg.InventoryResetOnBoot {
+		if err := inventorydb.ResetAndSeed(sqliteDB); err != nil {
+			return errors.Wrap(err, "reset and seed inventory sqlite db")
+		}
+	} else if cfg.InventorySeedOnStart {
+		if err := inventorydb.Seed(sqliteDB); err != nil {
+			return errors.Wrap(err, "seed inventory sqlite db")
+		}
+	}
+
+	inventoryStore, err := inventorydb.NewStore(sqliteDB)
+	if err != nil {
+		return errors.Wrap(err, "create inventory store")
+	}
+
 	composer := pinoweb.NewRuntimeComposer(parsed, pinoweb.RuntimeComposerOptions{
 		RuntimeKey:   "inventory",
 		SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
-		AllowedTools: []string{},
+		AllowedTools: append([]string(nil), inventoryToolNames...),
 	})
 	requestResolver := pinoweb.NewStrictRequestResolver("inventory")
 
@@ -82,6 +120,9 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	)
 	if err != nil {
 		return errors.Wrap(err, "new webchat server")
+	}
+	for name, factory := range inventoryToolFactories(inventoryStore) {
+		srv.RegisterTool(name, factory)
 	}
 
 	chatHandler := webhttp.NewChatHandler(srv.ChatService(), requestResolver)
@@ -106,8 +147,6 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		return errors.New("http server is not initialized")
 	}
 
-	cfg := &serverSettings{}
-	_ = parsed.DecodeSectionInto(values.DefaultSlug, cfg)
 	if cfg.Root != "" && cfg.Root != "/" {
 		parent := http.NewServeMux()
 		prefix := cfg.Root
