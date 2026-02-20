@@ -10,6 +10,8 @@ import (
 	timelinepb "github.com/go-go-golems/pinocchio/pkg/sem/pb/proto/sem/timeline"
 	semregistry "github.com/go-go-golems/pinocchio/pkg/sem/registry"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -22,10 +24,10 @@ const (
 	eventTypeHypercardSuggestionsUpdate events.EventType = "hypercard.suggestions.update"
 	eventTypeHypercardSuggestionsV1     events.EventType = "hypercard.suggestions.v1"
 	eventTypeHypercardSuggestionsError  events.EventType = "hypercard.suggestions.error"
-	eventTypeHypercardCardStart      events.EventType = "hypercard.card.start"
-	eventTypeHypercardCardUpdate     events.EventType = "hypercard.card.update"
-	eventTypeHypercardCardV2         events.EventType = "hypercard.card.v2"
-	eventTypeHypercardCardError      events.EventType = "hypercard.card.error"
+	eventTypeHypercardCardStart         events.EventType = "hypercard.card.start"
+	eventTypeHypercardCardUpdate        events.EventType = "hypercard.card.update"
+	eventTypeHypercardCardV2            events.EventType = "hypercard.card.v2"
+	eventTypeHypercardCardError         events.EventType = "hypercard.card.error"
 	hypercardPolicyMiddlewareName                        = "inventory_artifact_policy"
 	hypercardGeneratorMiddlewareName                     = "inventory_artifact_generator"
 	hypercardSuggestionsMiddlewareName                   = "inventory_suggestions_policy"
@@ -300,17 +302,11 @@ func registerHypercardTimelineHandlers() {
 		webchat.RegisterTimelineHandler(eventType, func(ctx context.Context, p *webchat.TimelineProjector, ev webchat.TimelineSemEvent, _ int64) error {
 			data := parseTimelineData(ev.Data)
 			entityID := ev.ID + ":status"
-			return p.Upsert(ctx, ev.Seq, &timelinepb.TimelineEntityV1{
-				Id:   entityID,
-				Kind: "status",
-				Snapshot: &timelinepb.TimelineEntityV1_Status{
-					Status: &timelinepb.StatusSnapshotV1{
-						SchemaVersion: 1,
-						Type:          statusType,
-						Text:          textFn(data),
-					},
-				},
-			})
+			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(entityID, "status", &timelinepb.StatusSnapshotV1{
+				SchemaVersion: 1,
+				Type:          statusType,
+				Text:          textFn(data),
+			}))
 		})
 	}
 
@@ -364,19 +360,13 @@ func registerHypercardTimelineHandlers() {
 			if err != nil {
 				resultStruct, _ = structpb.NewStruct(map[string]any{"raw": string(ev.Data)})
 			}
-			return p.Upsert(ctx, ev.Seq, &timelinepb.TimelineEntityV1{
-				Id:   ev.ID + ":result",
-				Kind: "tool_result",
-				Snapshot: &timelinepb.TimelineEntityV1_ToolResult{
-					ToolResult: &timelinepb.ToolResultSnapshotV1{
-						SchemaVersion: 1,
-						ToolCallId:    ev.ID,
-						Result:        resultStruct,
-						ResultRaw:     string(ev.Data),
-						CustomKind:    customKind,
-					},
-				},
-			})
+			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(ev.ID+":result", "tool_result", &timelinepb.ToolResultSnapshotV1{
+				SchemaVersion: 1,
+				ToolCallId:    ev.ID,
+				Result:        resultStruct,
+				ResultRaw:     string(ev.Data),
+				CustomKind:    customKind,
+			}))
 		})
 	}
 
@@ -422,4 +412,34 @@ func stringFromMap(m map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+func timelineEntityFromProtoMessage(id, kind string, msg proto.Message) *timelinepb.TimelineEntityV2 {
+	return &timelinepb.TimelineEntityV2{
+		Id:    strings.TrimSpace(id),
+		Kind:  strings.TrimSpace(kind),
+		Props: timelineStructFromProtoMessage(msg),
+	}
+}
+
+func timelineStructFromProtoMessage(msg proto.Message) *structpb.Struct {
+	if msg == nil {
+		return &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	}
+	raw, err := protojson.MarshalOptions{
+		EmitUnpopulated: true,
+		UseProtoNames:   false,
+	}.Marshal(msg)
+	if err != nil {
+		return &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	}
+	st, err := structpb.NewStruct(m)
+	if err != nil || st == nil {
+		return &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	}
+	return st
 }
