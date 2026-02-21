@@ -353,19 +353,18 @@ func registerHypercardTimelineHandlers() {
 		return msg
 	})
 
-	registerResult := func(eventType string, customKind string) {
+	registerResult := func(eventType string, timelineKind string) {
 		webchat.RegisterTimelineHandler(eventType, func(ctx context.Context, p *webchat.TimelineProjector, ev webchat.TimelineSemEvent, _ int64) error {
 			data := parseTimelineData(ev.Data)
 			resultStruct, err := structpb.NewStruct(data)
 			if err != nil {
 				resultStruct, _ = structpb.NewStruct(map[string]any{"raw": string(ev.Data)})
 			}
-			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(ev.ID+":result", "tool_result", &timelinepb.ToolResultSnapshotV1{
+			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(ev.ID+":result", timelineKind, &timelinepb.ToolResultSnapshotV1{
 				SchemaVersion: 1,
 				ToolCallId:    ev.ID,
 				Result:        resultStruct,
 				ResultRaw:     string(ev.Data),
-				CustomKind:    customKind,
 			}))
 		})
 	}
