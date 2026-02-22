@@ -360,16 +360,19 @@ func registerHypercardTimelineHandlers() {
 			if err != nil {
 				resultStruct, _ = structpb.NewStruct(map[string]any{"raw": string(ev.Data)})
 			}
+			errorMessage := stringFromMap(data, "error")
 			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(ev.ID+":result", timelineKind, &timelinepb.ToolResultSnapshotV1{
 				SchemaVersion: 1,
 				ToolCallId:    ev.ID,
 				Result:        resultStruct,
+				Error:         errorMessage,
 				ResultRaw:     string(ev.Data),
 			}))
 		})
 	}
 
 	registerResult("hypercard.widget.v1", "hypercard.widget.v1")
+	registerResult("hypercard.widget.error", "hypercard.widget.v1")
 	registerResult("hypercard.card.v2", "hypercard.card.v2")
 
 	registerSuggestions := func(eventType string) {

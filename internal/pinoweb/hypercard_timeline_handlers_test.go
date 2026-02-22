@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	chatstore "github.com/go-go-golems/pinocchio/pkg/persistence/chatstore"
+	timelinepb "github.com/go-go-golems/pinocchio/pkg/sem/pb/proto/sem/timeline"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	"github.com/stretchr/testify/require"
 )
@@ -70,4 +71,55 @@ func TestHypercardTimelineHandlers_SuggestionsProjectToSingleAssistantEntity(t *
 	require.Equal(t, "assistant", props["source"])
 	require.Equal(t, nil, props["consumedAt"])
 	require.Equal(t, []any{"Summarize today sales", "Show margin report"}, props["items"])
+}
+
+func TestHypercardTimelineHandlers_WidgetErrorProjectsStatusAndResult(t *testing.T) {
+	webchat.ClearTimelineHandlers()
+	t.Cleanup(webchat.ClearTimelineHandlers)
+	registerHypercardTimelineHandlers()
+
+	store := chatstore.NewInMemoryTimelineStore(100)
+	projector := webchat.NewTimelineProjector("conv-widget-error", store, nil)
+
+	require.NoError(t, projector.ApplySemFrame(context.Background(), semFrameForTest(
+		t,
+		"hypercard.widget.error",
+		"widget-call-1",
+		42,
+		map[string]any{
+			"itemId": "widget-call-1",
+			"error":  "yaml: unmarshal errors: mapping key artifact already defined",
+		},
+	)))
+
+	snap, err := store.GetSnapshot(context.Background(), "conv-widget-error", 0, 100)
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), snap.Version)
+	require.Len(t, snap.Entities, 2)
+
+	byID := map[string]*timelinepb.TimelineEntityV2{}
+	for _, entity := range snap.Entities {
+		byID[entity.Id] = entity
+	}
+
+	statusEntity, ok := byID["widget-call-1:status"]
+	require.True(t, ok)
+	require.Equal(t, "status", statusEntity.Kind)
+	require.NotNil(t, statusEntity.Props)
+	statusProps := statusEntity.Props.AsMap()
+	require.Equal(t, "error", statusProps["type"])
+	require.Equal(t, "yaml: unmarshal errors: mapping key artifact already defined", statusProps["text"])
+
+	resultEntity, ok := byID["widget-call-1:result"]
+	require.True(t, ok)
+	require.Equal(t, "hypercard.widget.v1", resultEntity.Kind)
+	require.NotNil(t, resultEntity.Props)
+	resultProps := resultEntity.Props.AsMap()
+	require.Equal(t, "widget-call-1", resultProps["toolCallId"])
+	require.Equal(t, "yaml: unmarshal errors: mapping key artifact already defined", resultProps["error"])
+
+	resultBody, ok := resultProps["result"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "widget-call-1", resultBody["itemId"])
+	require.Equal(t, "yaml: unmarshal errors: mapping key artifact already defined", resultBody["error"])
 }
