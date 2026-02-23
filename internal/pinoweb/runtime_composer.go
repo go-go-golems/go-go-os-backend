@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	gepmw "github.com/go-go-golems/geppetto/pkg/inference/middleware"
+	gepprofiles "github.com/go-go-golems/geppetto/pkg/profiles"
 	"github.com/go-go-golems/geppetto/pkg/steps/ai/settings"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	infruntime "github.com/go-go-golems/pinocchio/pkg/inference/runtime"
@@ -44,9 +45,25 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 		return infruntime.ComposedRuntime{}, errors.Wrap(err, "parse step settings")
 	}
 
+	runtimeKey := strings.TrimSpace(req.ProfileKey)
+	if runtimeKey == "" {
+		runtimeKey = strings.TrimSpace(c.options.RuntimeKey)
+	}
+	if runtimeKey == "" {
+		runtimeKey = "inventory"
+	}
+
+	profileRuntime := req.ResolvedProfileRuntime
 	systemPrompt := strings.TrimSpace(c.options.SystemPrompt)
+	if profileRuntime != nil && strings.TrimSpace(profileRuntime.SystemPrompt) != "" {
+		systemPrompt = strings.TrimSpace(profileRuntime.SystemPrompt)
+	}
 	if systemPrompt == "" {
 		systemPrompt = "You are an inventory assistant."
+	}
+	allowedTools := append([]string(nil), c.options.AllowedTools...)
+	if profileRuntime != nil && len(profileRuntime.Tools) > 0 {
+		allowedTools = append([]string(nil), profileRuntime.Tools...)
 	}
 
 	mwFactories := map[string]infruntime.MiddlewareBuilder{
@@ -79,33 +96,52 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 		return infruntime.ComposedRuntime{}, errors.Wrap(err, "compose engine")
 	}
 
-	runtimeKey := strings.TrimSpace(c.options.RuntimeKey)
-	if runtimeKey == "" {
-		runtimeKey = "inventory"
-	}
-
-	allowedTools := append([]string(nil), c.options.AllowedTools...)
 	return infruntime.ComposedRuntime{
-		Engine:             engine_,
-		RuntimeKey:         runtimeKey,
-		RuntimeFingerprint: runtimeFingerprint(runtimeKey, systemPrompt, allowedTools, stepSettings),
-		SeedSystemPrompt:   systemPrompt,
-		AllowedTools:       allowedTools,
+		Engine:     engine_,
+		RuntimeKey: runtimeKey,
+		RuntimeFingerprint: runtimeFingerprint(runtimeFingerprintInput{
+			ProfileVersion: req.ProfileVersion,
+			RuntimeKey:     runtimeKey,
+			SystemPrompt:   systemPrompt,
+			AllowedTools:   allowedTools,
+			ProfileRuntime: profileRuntime,
+			StepSettings:   stepSettings,
+		}),
+		SeedSystemPrompt: systemPrompt,
+		AllowedTools:     allowedTools,
 	}, nil
 }
 
-func runtimeFingerprint(runtimeKey, systemPrompt string, allowedTools []string, stepSettings *settings.StepSettings) string {
+type runtimeFingerprintInput struct {
+	ProfileVersion uint64
+	RuntimeKey     string
+	SystemPrompt   string
+	AllowedTools   []string
+	ProfileRuntime *gepprofiles.RuntimeSpec
+	StepSettings   *settings.StepSettings
+}
+
+func runtimeFingerprint(in runtimeFingerprintInput) string {
 	payload := map[string]any{
-		"runtime_key":   runtimeKey,
-		"system_prompt": systemPrompt,
-		"allowed_tools": allowedTools,
+		"profile_version": in.ProfileVersion,
+		"runtime_key":     in.RuntimeKey,
+		"system_prompt":   in.SystemPrompt,
+		"allowed_tools":   in.AllowedTools,
 	}
-	if stepSettings != nil {
-		payload["step_metadata"] = stepSettings.GetMetadata()
+	if in.ProfileRuntime != nil {
+		payload["profile_runtime"] = map[string]any{
+			"system_prompt":       in.ProfileRuntime.SystemPrompt,
+			"middlewares":         in.ProfileRuntime.Middlewares,
+			"tools":               in.ProfileRuntime.Tools,
+			"step_settings_patch": in.ProfileRuntime.StepSettingsPatch,
+		}
+	}
+	if in.StepSettings != nil {
+		payload["step_metadata"] = in.StepSettings.GetMetadata()
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return runtimeKey
+		return in.RuntimeKey
 	}
 	return string(b)
 }

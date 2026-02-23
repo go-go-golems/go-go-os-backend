@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,13 +24,10 @@ import (
 	chatstore "github.com/go-go-golems/pinocchio/pkg/persistence/chatstore"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
-	plzconfirmbackend "github.com/go-go-golems/plz-confirm/pkg/backend"
-	v1 "github.com/go-go-golems/plz-confirm/proto/generated/go/plz_confirm/v1"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
@@ -91,12 +89,22 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 		if runtimeKey == "" {
 			runtimeKey = "inventory"
 		}
+		systemPrompt := "seed"
+		if req.ResolvedProfileRuntime != nil && strings.TrimSpace(req.ResolvedProfileRuntime.SystemPrompt) != "" {
+			systemPrompt = strings.TrimSpace(req.ResolvedProfileRuntime.SystemPrompt)
+		}
+		allowedTools := append([]string(nil), inventoryToolNames...)
+		if req.ResolvedProfileRuntime != nil && len(req.ResolvedProfileRuntime.Tools) > 0 {
+			allowedTools = append([]string(nil), req.ResolvedProfileRuntime.Tools...)
+		}
+		versionedRuntimeKey := fmt.Sprintf("%s@v%d", runtimeKey, req.ProfileVersion)
 		return infruntime.ComposedRuntime{
 			Engine:             integrationNoopEngine{},
 			Sink:               integrationNoopSink{},
-			RuntimeKey:         runtimeKey,
-			RuntimeFingerprint: "fp-" + runtimeKey,
-			SeedSystemPrompt:   "seed",
+			RuntimeKey:         versionedRuntimeKey,
+			RuntimeFingerprint: "fp-" + versionedRuntimeKey + "-" + systemPrompt,
+			SeedSystemPrompt:   systemPrompt,
+			AllowedTools:       allowedTools,
 		}, nil
 	})
 
@@ -115,15 +123,6 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 	)
 	require.NoError(t, err)
 
-	resolver := pinoweb.NewStrictRequestResolver("inventory")
-	chatHandler := webhttp.NewChatHandler(webchatSrv.ChatService(), resolver)
-	wsHandler := webhttp.NewWSHandler(
-		webchatSrv.StreamHub(),
-		resolver,
-		websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
-	)
-	timelineLogger := log.With().Str("component", "inventory-chat-test").Str("route", "/api/timeline").Logger()
-	timelineHandler := webhttp.NewTimelineHandler(webchatSrv.TimelineService(), timelineLogger)
 	profileRegistry, err := newInMemoryProfileService("inventory", &gepprofiles.Profile{
 		Slug:        gepprofiles.MustProfileSlug("inventory"),
 		DisplayName: "Inventory",
@@ -132,8 +131,28 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 			SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
 			Tools:        append([]string(nil), inventoryToolNames...),
 		},
+	}, &gepprofiles.Profile{
+		Slug:        gepprofiles.MustProfileSlug("analyst"),
+		DisplayName: "Analyst",
+		Description: "Analysis-focused profile for inventory reporting.",
+		Runtime: gepprofiles.RuntimeSpec{
+			SystemPrompt: "You are an inventory analyst. Explain results with concise evidence.",
+			Tools:        append([]string(nil), inventoryToolNames...),
+		},
 	})
 	require.NoError(t, err)
+	resolver := pinoweb.NewStrictRequestResolver("inventory").WithProfileRegistry(
+		profileRegistry,
+		gepprofiles.MustRegistrySlug(profileRegistrySlug),
+	)
+	chatHandler := webhttp.NewChatHandler(webchatSrv.ChatService(), resolver)
+	wsHandler := webhttp.NewWSHandler(
+		webchatSrv.StreamHub(),
+		resolver,
+		websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+	)
+	timelineLogger := log.With().Str("component", "inventory-chat-test").Str("route", "/api/timeline").Logger()
+	timelineHandler := webhttp.NewTimelineHandler(webchatSrv.TimelineService(), timelineLogger)
 
 	appMux := http.NewServeMux()
 	appMux.HandleFunc("/chat", chatHandler)
@@ -333,16 +352,16 @@ func TestProfileAPI_CRUDRoutesAreMounted(t *testing.T) {
 	require.NotEmpty(t, listed)
 
 	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
-		"slug":"analyst",
-		"display_name":"Analyst",
+		"slug":"operator",
+		"display_name":"Operator",
 		"description":"Reads inventory data",
-		"runtime":{"system_prompt":"You are an analyst."}
+		"runtime":{"system_prompt":"You are an operator."}
 	}`))
 	require.NoError(t, err)
 	defer createResp.Body.Close()
 	require.Equal(t, http.StatusCreated, createResp.StatusCode)
 
-	getResp, err := http.Get(srv.URL + "/api/chat/profiles/analyst")
+	getResp, err := http.Get(srv.URL + "/api/chat/profiles/operator")
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
@@ -394,6 +413,193 @@ func TestConfirmWS_PrefixedEndpointStreamsPendingRequests(t *testing.T) {
 	require.Equal(t, "new_request", eventType)
 	require.Equal(t, created.GetId(), eventReq.GetId())
 	require.Equal(t, v1.RequestStatus_pending, eventReq.GetStatus())
+}
+
+func TestProfileE2E_ListSelectChat_RuntimeKeyReflectsSelection(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	listResp, err := http.Get(srv.URL + "/api/chat/profiles")
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+
+	var listed []map[string]any
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listed))
+	require.True(t, hasProfileSlug(listed, "analyst"), "expected analyst profile in list")
+
+	selectResp, err := http.Post(srv.URL+"/api/chat/profile", "application/json", strings.NewReader(`{"slug":"analyst"}`))
+	require.NoError(t, err)
+	defer selectResp.Body.Close()
+	require.Equal(t, http.StatusOK, selectResp.StatusCode)
+	cookie := mustProfileCookie(t, selectResp)
+
+	const convID = "conv-profile-select-1"
+	reqBody := strings.NewReader(`{"prompt":"hello analyst","conv_id":"` + convID + `"}`)
+	chatReq, err := http.NewRequest(http.MethodPost, srv.URL+"/chat", reqBody)
+	require.NoError(t, err)
+	chatReq.Header.Set("Content-Type", "application/json")
+	chatReq.AddCookie(cookie)
+	chatResp, err := http.DefaultClient.Do(chatReq)
+	require.NoError(t, err)
+	defer chatResp.Body.Close()
+	require.Equal(t, http.StatusOK, chatResp.StatusCode)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?conv_id=" + convID
+	wsHeaders := http.Header{}
+	wsHeaders.Add("Cookie", cookie.String())
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, wsHeaders)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, helloFrame, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, "ws.hello", integrationSemEventType(helloFrame))
+	require.Equal(t, "analyst@v0", integrationSemRuntimeKey(helloFrame))
+}
+
+func TestProfileE2E_CreateProfile_AppearsInList_UsableImmediately(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
+		"slug":"planner",
+		"display_name":"Planner",
+		"description":"Plans replenishment and triage",
+		"runtime":{"system_prompt":"You are a planning assistant.","tools":["inventory.list","inventory.search"]}
+	}`))
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	listResp, err := http.Get(srv.URL + "/api/chat/profiles")
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+
+	var listed []map[string]any
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listed))
+	require.True(t, hasProfileSlug(listed, "planner"), "expected planner profile in list")
+
+	const convID = "conv-profile-create-1"
+	chatResp, err := http.Post(
+		srv.URL+"/chat",
+		"application/json",
+		strings.NewReader(`{"prompt":"run planner","conv_id":"`+convID+`","profile":"planner"}`),
+	)
+	require.NoError(t, err)
+	defer chatResp.Body.Close()
+	require.Equal(t, http.StatusOK, chatResp.StatusCode)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?conv_id=" + convID + "&profile=planner"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, helloFrame, err := conn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, "ws.hello", integrationSemEventType(helloFrame))
+	require.Equal(t, "planner@v1", integrationSemRuntimeKey(helloFrame))
+}
+
+func TestProfileE2E_UpdateIncrementsVersion_AndRebuildsRuntime(t *testing.T) {
+	srv := newIntegrationServerWithRouterOptions(t, webchat.WithDebugRoutesEnabled(true))
+	defer srv.Close()
+
+	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
+		"slug":"rebuilder",
+		"display_name":"Rebuilder",
+		"description":"Profile used for runtime rebuild checks",
+		"runtime":{"system_prompt":"Version one profile prompt"}
+	}`))
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&created))
+	initialVersion := extractProfileVersion(created)
+	require.Equal(t, uint64(1), initialVersion)
+
+	const convID = "conv-profile-rebuild-1"
+	chatRespV1, err := http.Post(
+		srv.URL+"/chat",
+		"application/json",
+		strings.NewReader(`{"prompt":"before update","conv_id":"`+convID+`","profile":"rebuilder"}`),
+	)
+	require.NoError(t, err)
+	defer chatRespV1.Body.Close()
+	require.Equal(t, http.StatusOK, chatRespV1.StatusCode)
+
+	runtimeKeyV1 := mustConversationRuntimeKey(t, srv, convID)
+	require.Equal(t, "rebuilder@v1", runtimeKeyV1)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, srv.URL+"/api/chat/profiles/rebuilder", strings.NewReader(`{
+		"expected_version":1,
+		"runtime":{"system_prompt":"Version two profile prompt"}
+	}`))
+	require.NoError(t, err)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	defer patchResp.Body.Close()
+	require.Equal(t, http.StatusOK, patchResp.StatusCode)
+
+	var patched map[string]any
+	require.NoError(t, json.NewDecoder(patchResp.Body).Decode(&patched))
+	require.Equal(t, uint64(2), extractProfileVersion(patched))
+
+	chatRespV2, err := http.Post(
+		srv.URL+"/chat",
+		"application/json",
+		strings.NewReader(`{"prompt":"after update","conv_id":"`+convID+`","profile":"rebuilder"}`),
+	)
+	require.NoError(t, err)
+	defer chatRespV2.Body.Close()
+	require.Equal(t, http.StatusOK, chatRespV2.StatusCode)
+
+	runtimeKeyV2 := mustConversationRuntimeKey(t, srv, convID)
+	require.Equal(t, "rebuilder@v2", runtimeKeyV2)
+}
+
+func TestProfileE2E_ReadOnlyProfileMutationRejectedWithStableError(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
+		"slug":"locked",
+		"display_name":"Locked",
+		"policy":{"read_only":true},
+		"runtime":{"system_prompt":"Read only profile"}
+	}`))
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, srv.URL+"/api/chat/profiles/locked", strings.NewReader(`{
+		"display_name":"Unlocked?"
+	}`))
+	require.NoError(t, err)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	defer patchResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, patchResp.StatusCode)
+	patchBody, err := io.ReadAll(patchResp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(patchBody), "policy violation")
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/chat/profiles/locked", nil)
+	require.NoError(t, err)
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	require.NoError(t, err)
+	defer deleteResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, deleteResp.StatusCode)
+	deleteBody, err := io.ReadAll(deleteResp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(deleteBody), "policy violation")
 }
 
 func TestChatHandler_PersistsTurnSnapshotsWhenTurnStoreConfigured(t *testing.T) {
@@ -460,6 +666,47 @@ func integrationSemEventType(frame []byte) string {
 	return env.Event.Type
 }
 
+func integrationSemRuntimeKey(frame []byte) string {
+	var env struct {
+		Event struct {
+			Data struct {
+				RuntimeKey      string `json:"runtimeKey"`
+				RuntimeKeySnake string `json:"runtime_key"`
+			} `json:"data"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(frame, &env); err != nil {
+		return ""
+	}
+	if env.Event.Data.RuntimeKey != "" {
+		return env.Event.Data.RuntimeKey
+	}
+	return env.Event.Data.RuntimeKeySnake
+}
+
+func hasProfileSlug(items []map[string]any, slug string) bool {
+	want := strings.TrimSpace(slug)
+	for _, item := range items {
+		got, _ := item["slug"].(string)
+		if strings.TrimSpace(got) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func mustProfileCookie(t *testing.T, resp *http.Response) *http.Cookie {
+	t.Helper()
+	require.NotNil(t, resp)
+	for _, ck := range resp.Cookies() {
+		if strings.TrimSpace(ck.Name) == "chat_profile" && strings.TrimSpace(ck.Value) != "" {
+			return ck
+		}
+	}
+	t.Fatalf("expected chat_profile cookie")
+	return nil
+}
+
 func integrationCreateConfirmRequest(t *testing.T, baseURL string) *v1.UIRequest {
 	t.Helper()
 
@@ -503,4 +750,43 @@ func integrationReadConfirmWSEvent(t *testing.T, conn *websocket.Conn) (string, 
 	req := &v1.UIRequest{}
 	require.NoError(t, protojson.Unmarshal(env.Request, req))
 	return env.Type, req
+}
+
+func extractProfileVersion(doc map[string]any) uint64 {
+	metadata, _ := doc["metadata"].(map[string]any)
+	if metadata == nil {
+		return 0
+	}
+	raw, ok := metadata["version"]
+	if !ok {
+		return 0
+	}
+	switch v := raw.(type) {
+	case float64:
+		if v < 0 {
+			return 0
+		}
+		return uint64(v)
+	case int:
+		if v < 0 {
+			return 0
+		}
+		return uint64(v)
+	case uint64:
+		return v
+	default:
+		return 0
+	}
+}
+
+func mustConversationRuntimeKey(t *testing.T, srv *httptest.Server, convID string) string {
+	t.Helper()
+	resp, err := http.Get(srv.URL + "/api/debug/conversations/" + convID)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	runtimeKey, _ := payload["runtime_key"].(string)
+	return strings.TrimSpace(runtimeKey)
 }

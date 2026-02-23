@@ -117,7 +117,6 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		AllowedTools: append([]string(nil), inventoryToolNames...),
 	})
 	pinoweb.RegisterInventoryHypercardExtensions()
-	requestResolver := pinoweb.NewStrictRequestResolver("inventory")
 	profileRegistry, err := newInMemoryProfileService("inventory", &gepprofiles.Profile{
 		Slug:        gepprofiles.MustProfileSlug("inventory"),
 		DisplayName: "Inventory",
@@ -130,6 +129,10 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	if err != nil {
 		return errors.Wrap(err, "initialize profile registry")
 	}
+	requestResolver := pinoweb.NewStrictRequestResolver("inventory").WithProfileRegistry(
+		profileRegistry,
+		gepprofiles.MustRegistrySlug(profileRegistrySlug),
+	)
 
 	srv, err := webchat.NewServer(
 		ctx,
