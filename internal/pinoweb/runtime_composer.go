@@ -27,21 +27,21 @@ func NewRuntimeComposer(parsed *values.Values, options RuntimeComposerOptions) *
 	return &RuntimeComposer{parsed: parsed, options: options}
 }
 
-func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeComposeRequest) (infruntime.RuntimeArtifacts, error) {
+func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.ConversationRuntimeRequest) (infruntime.ComposedRuntime, error) {
 	if c == nil || c.parsed == nil {
-		return infruntime.RuntimeArtifacts{}, errors.New("runtime composer is not configured")
+		return infruntime.ComposedRuntime{}, errors.New("runtime composer is not configured")
 	}
 	if ctx == nil {
-		return infruntime.RuntimeArtifacts{}, errors.New("compose context is nil")
+		return infruntime.ComposedRuntime{}, errors.New("compose context is nil")
 	}
 
-	if len(req.Overrides) > 0 {
-		return infruntime.RuntimeArtifacts{}, errors.New("runtime overrides are not allowed for inventory")
+	if len(req.RuntimeOverrides) > 0 {
+		return infruntime.ComposedRuntime{}, errors.New("runtime overrides are not allowed for inventory")
 	}
 
 	stepSettings, err := settings.NewStepSettingsFromParsedValues(c.parsed)
 	if err != nil {
-		return infruntime.RuntimeArtifacts{}, errors.Wrap(err, "parse step settings")
+		return infruntime.ComposedRuntime{}, errors.Wrap(err, "parse step settings")
 	}
 
 	systemPrompt := strings.TrimSpace(c.options.SystemPrompt)
@@ -49,7 +49,7 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 		systemPrompt = "You are an inventory assistant."
 	}
 
-	mwFactories := map[string]infruntime.MiddlewareFactory{
+	mwFactories := map[string]infruntime.MiddlewareBuilder{
 		hypercardPolicyMiddlewareName: func(cfg any) gepmw.Middleware {
 			if c, ok := cfg.(InventoryArtifactPolicyConfig); ok {
 				return NewInventoryArtifactPolicyMiddleware(c)
@@ -63,7 +63,7 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 			return NewInventorySuggestionsPolicyMiddleware(InventorySuggestionsPolicyConfig{})
 		},
 	}
-	middlewares := []infruntime.MiddlewareUse{
+	middlewares := []infruntime.MiddlewareSpec{
 		{
 			Name:   hypercardPolicyMiddlewareName,
 			Config: InventoryArtifactPolicyConfig{},
@@ -74,9 +74,9 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 		},
 	}
 
-	engine_, err := infruntime.ComposeEngineFromSettings(ctx, stepSettings.Clone(), systemPrompt, middlewares, mwFactories)
+	engine_, err := infruntime.BuildEngineFromSettings(ctx, stepSettings.Clone(), systemPrompt, middlewares, mwFactories)
 	if err != nil {
-		return infruntime.RuntimeArtifacts{}, errors.Wrap(err, "compose engine")
+		return infruntime.ComposedRuntime{}, errors.Wrap(err, "compose engine")
 	}
 
 	runtimeKey := strings.TrimSpace(c.options.RuntimeKey)
@@ -85,7 +85,7 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.RuntimeCom
 	}
 
 	allowedTools := append([]string(nil), c.options.AllowedTools...)
-	return infruntime.RuntimeArtifacts{
+	return infruntime.ComposedRuntime{
 		Engine:             engine_,
 		RuntimeKey:         runtimeKey,
 		RuntimeFingerprint: runtimeFingerprint(runtimeKey, systemPrompt, allowedTools, stepSettings),

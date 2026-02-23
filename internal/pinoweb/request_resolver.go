@@ -21,9 +21,9 @@ func NewStrictRequestResolver(runtimeKey string) *StrictRequestResolver {
 	return &StrictRequestResolver{runtimeKey: key}
 }
 
-func (r *StrictRequestResolver) Resolve(req *http.Request) (webhttp.ConversationRequestPlan, error) {
+func (r *StrictRequestResolver) Resolve(req *http.Request) (webhttp.ResolvedConversationRequest, error) {
 	if req == nil {
-		return webhttp.ConversationRequestPlan{}, &webhttp.RequestResolutionError{
+		return webhttp.ResolvedConversationRequest{}, &webhttp.RequestResolutionError{
 			Status:    http.StatusBadRequest,
 			ClientMsg: "bad request",
 		}
@@ -35,33 +35,33 @@ func (r *StrictRequestResolver) Resolve(req *http.Request) (webhttp.Conversation
 	case http.MethodPost:
 		return r.resolveChat(req)
 	default:
-		return webhttp.ConversationRequestPlan{}, &webhttp.RequestResolutionError{
+		return webhttp.ResolvedConversationRequest{}, &webhttp.RequestResolutionError{
 			Status:    http.StatusMethodNotAllowed,
 			ClientMsg: "method not allowed",
 		}
 	}
 }
 
-func (r *StrictRequestResolver) resolveWS(req *http.Request) (webhttp.ConversationRequestPlan, error) {
+func (r *StrictRequestResolver) resolveWS(req *http.Request) (webhttp.ResolvedConversationRequest, error) {
 	convID := strings.TrimSpace(req.URL.Query().Get("conv_id"))
 	if convID == "" {
-		return webhttp.ConversationRequestPlan{}, &webhttp.RequestResolutionError{
+		return webhttp.ResolvedConversationRequest{}, &webhttp.RequestResolutionError{
 			Status:    http.StatusBadRequest,
 			ClientMsg: "missing conv_id",
 		}
 	}
 
-	return webhttp.ConversationRequestPlan{
+	return webhttp.ResolvedConversationRequest{
 		ConvID:     convID,
 		RuntimeKey: r.runtimeKey,
 		Overrides:  nil,
 	}, nil
 }
 
-func (r *StrictRequestResolver) resolveChat(req *http.Request) (webhttp.ConversationRequestPlan, error) {
+func (r *StrictRequestResolver) resolveChat(req *http.Request) (webhttp.ResolvedConversationRequest, error) {
 	var body webhttp.ChatRequestBody
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		return webhttp.ConversationRequestPlan{}, &webhttp.RequestResolutionError{
+		return webhttp.ResolvedConversationRequest{}, &webhttp.RequestResolutionError{
 			Status:    http.StatusBadRequest,
 			ClientMsg: "bad request",
 			Err:       err,
@@ -71,7 +71,7 @@ func (r *StrictRequestResolver) resolveChat(req *http.Request) (webhttp.Conversa
 		body.Prompt = body.Text
 	}
 	if len(body.Overrides) > 0 {
-		return webhttp.ConversationRequestPlan{}, &webhttp.RequestResolutionError{
+		return webhttp.ResolvedConversationRequest{}, &webhttp.RequestResolutionError{
 			Status:    http.StatusBadRequest,
 			ClientMsg: "runtime overrides are not allowed",
 		}
@@ -82,7 +82,7 @@ func (r *StrictRequestResolver) resolveChat(req *http.Request) (webhttp.Conversa
 		convID = uuid.NewString()
 	}
 
-	return webhttp.ConversationRequestPlan{
+	return webhttp.ResolvedConversationRequest{
 		ConvID:         convID,
 		RuntimeKey:     r.runtimeKey,
 		Prompt:         body.Prompt,

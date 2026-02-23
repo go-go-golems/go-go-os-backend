@@ -6,9 +6,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	clay "github.com/go-go-golems/clay/pkg"
+	gepprofiles "github.com/go-go-golems/geppetto/pkg/profiles"
 	geppettosections "github.com/go-go-golems/geppetto/pkg/sections"
 	"github.com/go-go-golems/glazed/pkg/cli"
 	"github.com/go-go-golems/glazed/pkg/cmds"
@@ -42,6 +44,10 @@ type serverSettings struct {
 	InventorySeedOnStart bool   `glazed:"inventory-seed-on-start"`
 	InventoryResetOnBoot bool   `glazed:"inventory-reset-on-start"`
 }
+
+const (
+	profileRegistrySlug = "default"
+)
 
 func NewCommand() (*Command, error) {
 	geLayers, err := geppettosections.CreateGeppettoSections()
@@ -112,6 +118,18 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	})
 	pinoweb.RegisterInventoryHypercardExtensions()
 	requestResolver := pinoweb.NewStrictRequestResolver("inventory")
+	profileRegistry, err := newInMemoryProfileService("inventory", &gepprofiles.Profile{
+		Slug:        gepprofiles.MustProfileSlug("inventory"),
+		DisplayName: "Inventory",
+		Description: "Tool-first inventory assistant profile.",
+		Runtime: gepprofiles.RuntimeSpec{
+			SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
+			Tools:        append([]string(nil), inventoryToolNames...),
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "initialize profile registry")
+	}
 
 	srv, err := webchat.NewServer(
 		ctx,
@@ -140,6 +158,12 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	appMux.HandleFunc("/chat", chatHandler)
 	appMux.HandleFunc("/chat/", chatHandler)
 	appMux.HandleFunc("/ws", wsHandler)
+	webhttp.RegisterProfileAPIHandlers(appMux, profileRegistry, webhttp.ProfileAPIHandlerOptions{
+		DefaultRegistrySlug:             gepprofiles.MustRegistrySlug(profileRegistrySlug),
+		EnableCurrentProfileCookieRoute: true,
+		WriteActor:                      "hypercard-inventory-server",
+		WriteSource:                     "http-api",
+	})
 	appMux.HandleFunc("/api/timeline", timelineHandler)
 	appMux.HandleFunc("/api/timeline/", timelineHandler)
 	appMux.Handle("/api/", srv.APIHandler())
@@ -167,6 +191,69 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	}
 
 	return srv.Run(ctx)
+}
+
+func newInMemoryProfileService(defaultSlug string, profileDefs ...*gepprofiles.Profile) (gepprofiles.Registry, error) {
+	registrySlug := gepprofiles.MustRegistrySlug(profileRegistrySlug)
+	registry := &gepprofiles.ProfileRegistry{
+		Slug:     registrySlug,
+		Profiles: map[gepprofiles.ProfileSlug]*gepprofiles.Profile{},
+	}
+
+	for _, profile := range profileDefs {
+		if profile == nil {
+			continue
+		}
+		clone := profile.Clone()
+		if clone == nil {
+			continue
+		}
+		if err := gepprofiles.ValidateProfile(clone); err != nil {
+			return nil, err
+		}
+		registry.Profiles[clone.Slug] = clone
+	}
+
+	if strings.TrimSpace(defaultSlug) != "" {
+		slug, err := gepprofiles.ParseProfileSlug(defaultSlug)
+		if err != nil {
+			return nil, err
+		}
+		registry.DefaultProfileSlug = slug
+	}
+
+	if len(registry.Profiles) > 0 {
+		if registry.DefaultProfileSlug.IsZero() {
+			registry.DefaultProfileSlug = firstProfileSlug(registry.Profiles)
+		}
+		if _, ok := registry.Profiles[registry.DefaultProfileSlug]; !ok {
+			registry.DefaultProfileSlug = firstProfileSlug(registry.Profiles)
+		}
+	}
+
+	if err := gepprofiles.ValidateRegistry(registry); err != nil {
+		return nil, err
+	}
+	store := gepprofiles.NewInMemoryProfileStore()
+	if err := store.UpsertRegistry(context.Background(), registry, gepprofiles.SaveOptions{
+		Actor:  "hypercard-inventory-server",
+		Source: "builtin",
+	}); err != nil {
+		return nil, err
+	}
+	return gepprofiles.NewStoreRegistry(store, registrySlug)
+}
+
+func firstProfileSlug(profiles map[gepprofiles.ProfileSlug]*gepprofiles.Profile) gepprofiles.ProfileSlug {
+	slugs := make([]gepprofiles.ProfileSlug, 0, len(profiles))
+	for slug := range profiles {
+		slugs = append(slugs, slug)
+	}
+	sort.Slice(slugs, func(i, j int) bool { return slugs[i] < slugs[j] })
+	if len(slugs) == 0 {
+		return ""
+	}
+	return slugs[0]
 }
 
 func main() {

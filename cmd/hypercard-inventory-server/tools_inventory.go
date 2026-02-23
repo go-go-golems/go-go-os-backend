@@ -81,8 +81,8 @@ type recordSaleOutput struct {
 	Item *inventorydb.Item `json:"item,omitempty"`
 }
 
-func inventoryToolFactories(store *inventorydb.Store) map[string]infruntime.ToolFactory {
-	return map[string]infruntime.ToolFactory{
+func inventoryToolFactories(store *inventorydb.Store) map[string]infruntime.ToolRegistrar {
+	return map[string]infruntime.ToolRegistrar{
 		"inventory_search_items": func(reg geptools.ToolRegistry) error {
 			return registerInventorySearchItemsTool(reg, store)
 		},

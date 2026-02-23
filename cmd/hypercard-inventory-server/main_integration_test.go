@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-go-golems/geppetto/pkg/events"
+	gepprofiles "github.com/go-go-golems/geppetto/pkg/profiles"
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	infruntime "github.com/go-go-golems/pinocchio/pkg/inference/runtime"
@@ -85,12 +86,12 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 	staticFS := fstest.MapFS{
 		"static/index.html": {Data: []byte("<html><body>inventory</body></html>")},
 	}
-	runtimeComposer := infruntime.RuntimeComposerFunc(func(_ context.Context, req infruntime.RuntimeComposeRequest) (infruntime.RuntimeArtifacts, error) {
-		runtimeKey := strings.TrimSpace(req.RuntimeKey)
+	runtimeComposer := infruntime.RuntimeBuilderFunc(func(_ context.Context, req infruntime.ConversationRuntimeRequest) (infruntime.ComposedRuntime, error) {
+		runtimeKey := strings.TrimSpace(req.ProfileKey)
 		if runtimeKey == "" {
 			runtimeKey = "inventory"
 		}
-		return infruntime.RuntimeArtifacts{
+		return infruntime.ComposedRuntime{
 			Engine:             integrationNoopEngine{},
 			Sink:               integrationNoopSink{},
 			RuntimeKey:         runtimeKey,
@@ -123,11 +124,27 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 	)
 	timelineLogger := log.With().Str("component", "inventory-chat-test").Str("route", "/api/timeline").Logger()
 	timelineHandler := webhttp.NewTimelineHandler(webchatSrv.TimelineService(), timelineLogger)
+	profileRegistry, err := newInMemoryProfileService("inventory", &gepprofiles.Profile{
+		Slug:        gepprofiles.MustProfileSlug("inventory"),
+		DisplayName: "Inventory",
+		Description: "Tool-first inventory assistant profile.",
+		Runtime: gepprofiles.RuntimeSpec{
+			SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
+			Tools:        append([]string(nil), inventoryToolNames...),
+		},
+	})
+	require.NoError(t, err)
 
 	appMux := http.NewServeMux()
 	appMux.HandleFunc("/chat", chatHandler)
 	appMux.HandleFunc("/chat/", chatHandler)
 	appMux.HandleFunc("/ws", wsHandler)
+	webhttp.RegisterProfileAPIHandlers(appMux, profileRegistry, webhttp.ProfileAPIHandlerOptions{
+		DefaultRegistrySlug:             gepprofiles.MustRegistrySlug(profileRegistrySlug),
+		EnableCurrentProfileCookieRoute: true,
+		WriteActor:                      "hypercard-inventory-server-test",
+		WriteSource:                     "http-api",
+	})
 	appMux.HandleFunc("/api/timeline", timelineHandler)
 	appMux.HandleFunc("/api/timeline/", timelineHandler)
 	appMux.Handle("/api/", webchatSrv.APIHandler())
@@ -142,12 +159,12 @@ func TestWSHandler_EmitsHypercardLifecycleEvents(t *testing.T) {
 	staticFS := fstest.MapFS{
 		"static/index.html": {Data: []byte("<html><body>inventory</body></html>")},
 	}
-	runtimeComposer := infruntime.RuntimeComposerFunc(func(_ context.Context, req infruntime.RuntimeComposeRequest) (infruntime.RuntimeArtifacts, error) {
-		runtimeKey := strings.TrimSpace(req.RuntimeKey)
+	runtimeComposer := infruntime.RuntimeBuilderFunc(func(_ context.Context, req infruntime.ConversationRuntimeRequest) (infruntime.ComposedRuntime, error) {
+		runtimeKey := strings.TrimSpace(req.ProfileKey)
 		if runtimeKey == "" {
 			runtimeKey = "inventory"
 		}
-		return infruntime.RuntimeArtifacts{
+		return infruntime.ComposedRuntime{
 			Engine:             integrationStructuredEngine{},
 			Sink:               nil,
 			RuntimeKey:         runtimeKey,
@@ -300,6 +317,35 @@ func TestTimelineEndpoint_ReturnsSnapshot(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	_, ok := payload["convId"]
 	require.True(t, ok, "expected timeline snapshot with convId")
+}
+
+func TestProfileAPI_CRUDRoutesAreMounted(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	listResp, err := http.Get(srv.URL + "/api/chat/profiles")
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+
+	var listed []map[string]any
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listed))
+	require.NotEmpty(t, listed)
+
+	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
+		"slug":"analyst",
+		"display_name":"Analyst",
+		"description":"Reads inventory data",
+		"runtime":{"system_prompt":"You are an analyst."}
+	}`))
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	getResp, err := http.Get(srv.URL + "/api/chat/profiles/analyst")
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
 }
 
 func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
