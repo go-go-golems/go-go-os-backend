@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,10 +22,13 @@ import (
 	chatstore "github.com/go-go-golems/pinocchio/pkg/persistence/chatstore"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
+	plzconfirmbackend "github.com/go-go-golems/plz-confirm/pkg/backend"
+	v1 "github.com/go-go-golems/plz-confirm/proto/generated/go/plz_confirm/v1"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
@@ -127,6 +131,7 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 	appMux.HandleFunc("/api/timeline", timelineHandler)
 	appMux.HandleFunc("/api/timeline/", timelineHandler)
 	appMux.Handle("/api/", webchatSrv.APIHandler())
+	plzconfirmbackend.NewServer().Mount(appMux, "/confirm")
 	appMux.Handle("/", webchatSrv.UIHandler())
 
 	return httptest.NewServer(appMux)
@@ -297,6 +302,54 @@ func TestTimelineEndpoint_ReturnsSnapshot(t *testing.T) {
 	require.True(t, ok, "expected timeline snapshot with convId")
 }
 
+func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	chatResp, err := http.Post(srv.URL+"/chat", "application/json", bytes.NewReader([]byte(`{"prompt":"hello","conv_id":"conv-confirm-coexist"}`)))
+	require.NoError(t, err)
+	defer chatResp.Body.Close()
+	require.Equal(t, http.StatusOK, chatResp.StatusCode)
+
+	confirmPayload := &v1.UIRequest{
+		Type:      v1.WidgetType_confirm,
+		SessionId: "global",
+		Input: &v1.UIRequest_ConfirmInput{
+			ConfirmInput: &v1.ConfirmInput{
+				Title: "Deploy now?",
+			},
+		},
+	}
+	confirmBody, err := protojson.Marshal(confirmPayload)
+	require.NoError(t, err)
+	confirmResp, err := http.Post(srv.URL+"/confirm/api/requests", "application/json", bytes.NewReader(confirmBody))
+	require.NoError(t, err)
+	defer confirmResp.Body.Close()
+	require.Equal(t, http.StatusCreated, confirmResp.StatusCode)
+
+	timelineResp, err := http.Get(srv.URL + "/api/timeline?conv_id=conv-confirm-coexist")
+	require.NoError(t, err)
+	defer timelineResp.Body.Close()
+	require.Equal(t, http.StatusOK, timelineResp.StatusCode)
+}
+
+func TestConfirmWS_PrefixedEndpointStreamsPendingRequests(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	created := integrationCreateConfirmRequest(t, srv.URL)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/confirm/ws?sessionId=global"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	eventType, eventReq := integrationReadConfirmWSEvent(t, conn)
+	require.Equal(t, "new_request", eventType)
+	require.Equal(t, created.GetId(), eventReq.GetId())
+	require.Equal(t, v1.RequestStatus_pending, eventReq.GetStatus())
+}
+
 func TestChatHandler_PersistsTurnSnapshotsWhenTurnStoreConfigured(t *testing.T) {
 	tmpDir := t.TempDir()
 	turnsPath := filepath.Join(tmpDir, "turns.db")
@@ -359,4 +412,49 @@ func integrationSemEventType(frame []byte) string {
 		return ""
 	}
 	return env.Event.Type
+}
+
+func integrationCreateConfirmRequest(t *testing.T, baseURL string) *v1.UIRequest {
+	t.Helper()
+
+	payload := &v1.UIRequest{
+		Type:      v1.WidgetType_confirm,
+		SessionId: "global",
+		Input: &v1.UIRequest_ConfirmInput{
+			ConfirmInput: &v1.ConfirmInput{
+				Title: "Approve release?",
+			},
+		},
+	}
+	body, err := protojson.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := http.Post(baseURL+"/confirm/api/requests", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	req := &v1.UIRequest{}
+	require.NoError(t, protojson.Unmarshal(raw, req))
+	return req
+}
+
+func integrationReadConfirmWSEvent(t *testing.T, conn *websocket.Conn) (string, *v1.UIRequest) {
+	t.Helper()
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, frame, err := conn.ReadMessage()
+	require.NoError(t, err)
+
+	var env struct {
+		Type    string          `json:"type"`
+		Request json.RawMessage `json:"request"`
+	}
+	require.NoError(t, json.Unmarshal(frame, &env))
+
+	req := &v1.UIRequest{}
+	require.NoError(t, protojson.Unmarshal(env.Request, req))
+	return env.Type, req
 }
