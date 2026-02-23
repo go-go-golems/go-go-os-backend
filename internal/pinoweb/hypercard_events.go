@@ -360,17 +360,51 @@ func registerHypercardTimelineHandlers() {
 			if err != nil {
 				resultStruct, _ = structpb.NewStruct(map[string]any{"raw": string(ev.Data)})
 			}
+			errorMessage := stringFromMap(data, "error")
 			return p.Upsert(ctx, ev.Seq, timelineEntityFromProtoMessage(ev.ID+":result", timelineKind, &timelinepb.ToolResultSnapshotV1{
 				SchemaVersion: 1,
 				ToolCallId:    ev.ID,
 				Result:        resultStruct,
+				Error:         errorMessage,
 				ResultRaw:     string(ev.Data),
 			}))
 		})
 	}
 
 	registerResult("hypercard.widget.v1", "hypercard.widget.v1")
+	registerResult("hypercard.widget.error", "hypercard.widget.v1")
 	registerResult("hypercard.card.v2", "hypercard.card.v2")
+
+	registerSuggestions := func(eventType string) {
+		webchat.RegisterTimelineHandler(eventType, func(ctx context.Context, p *webchat.TimelineProjector, ev webchat.TimelineSemEvent, _ int64) error {
+			data := parseTimelineData(ev.Data)
+			suggestions := stringSliceFromMap(data, "suggestions")
+			if len(suggestions) == 0 {
+				return nil
+			}
+			items := make([]any, 0, len(suggestions))
+			for _, suggestion := range suggestions {
+				items = append(items, suggestion)
+			}
+			props, err := structpb.NewStruct(map[string]any{
+				"source":     "assistant",
+				"items":      items,
+				"consumedAt": nil, // Explicitly clear consumed marker when a new block arrives.
+			})
+			if err != nil {
+				return err
+			}
+			return p.Upsert(ctx, ev.Seq, &timelinepb.TimelineEntityV2{
+				Id:    "suggestions:assistant",
+				Kind:  "suggestions",
+				Props: props,
+			})
+		})
+	}
+
+	registerSuggestions("hypercard.suggestions.start")
+	registerSuggestions("hypercard.suggestions.update")
+	registerSuggestions("hypercard.suggestions.v1")
 }
 
 func parseTimelineData(raw json.RawMessage) map[string]any {
@@ -411,6 +445,33 @@ func stringFromMap(m map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+func stringSliceFromMap(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	raw, ok := m[key]
+	if !ok {
+		return nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func timelineEntityFromProtoMessage(id, kind string, msg proto.Message) *timelinepb.TimelineEntityV2 {
