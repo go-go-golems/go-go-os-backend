@@ -640,6 +640,131 @@ func TestProfileE2E_SelectedProfileChange_RebuildsInFlightConversationRuntime(t 
 	_ = analystConn.Close()
 }
 
+func TestProfileE2E_RuntimeSwitchKeepsPerTurnRuntimeTruth(t *testing.T) {
+	tmpDir := t.TempDir()
+	turnsPath := filepath.Join(tmpDir, "turns-runtime-switch.db")
+	turnsDSN, err := chatstore.SQLiteTurnDSNForFile(turnsPath)
+	require.NoError(t, err)
+	turnStore, err := chatstore.NewSQLiteTurnStore(turnsDSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = turnStore.Close() })
+
+	srv := newIntegrationServerWithRouterOptions(
+		t,
+		webchat.WithTurnStore(turnStore),
+		webchat.WithDebugRoutesEnabled(true),
+	)
+	defer srv.Close()
+
+	createPlannerResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
+		"slug":"planner",
+		"display_name":"Planner",
+		"description":"Planning profile for runtime switch persistence test",
+		"runtime":{"system_prompt":"You are a planner.","tools":["inventory.list","inventory.search"]}
+	}`))
+	require.NoError(t, err)
+	defer createPlannerResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createPlannerResp.StatusCode)
+
+	selectInventoryResp, err := http.Post(srv.URL+"/api/chat/profile", "application/json", strings.NewReader(`{"slug":"inventory"}`))
+	require.NoError(t, err)
+	defer selectInventoryResp.Body.Close()
+	require.Equal(t, http.StatusOK, selectInventoryResp.StatusCode)
+	inventoryCookie := mustProfileCookie(t, selectInventoryResp)
+
+	const convID = "conv-runtime-truth-switch-1"
+	reqInventory, err := http.NewRequest(
+		http.MethodPost,
+		srv.URL+"/chat",
+		strings.NewReader(`{"prompt":"inventory baseline","conv_id":"`+convID+`"}`),
+	)
+	require.NoError(t, err)
+	reqInventory.Header.Set("Content-Type", "application/json")
+	reqInventory.AddCookie(inventoryCookie)
+	respInventory, err := http.DefaultClient.Do(reqInventory)
+	require.NoError(t, err)
+	defer respInventory.Body.Close()
+	require.Contains(t, []int{http.StatusOK, http.StatusAccepted}, respInventory.StatusCode)
+
+	selectPlannerResp, err := http.Post(srv.URL+"/api/chat/profile", "application/json", strings.NewReader(`{"slug":"planner"}`))
+	require.NoError(t, err)
+	defer selectPlannerResp.Body.Close()
+	require.Equal(t, http.StatusOK, selectPlannerResp.StatusCode)
+	plannerCookie := mustProfileCookie(t, selectPlannerResp)
+
+	reqPlanner, err := http.NewRequest(
+		http.MethodPost,
+		srv.URL+"/chat",
+		strings.NewReader(`{"prompt":"switch to planner","conv_id":"`+convID+`"}`),
+	)
+	require.NoError(t, err)
+	reqPlanner.Header.Set("Content-Type", "application/json")
+	reqPlanner.AddCookie(plannerCookie)
+	respPlanner, err := http.DefaultClient.Do(reqPlanner)
+	require.NoError(t, err)
+	defer respPlanner.Body.Close()
+	require.Contains(t, []int{http.StatusOK, http.StatusAccepted}, respPlanner.StatusCode)
+
+	require.Eventually(t, func() bool {
+		snapshots, listErr := turnStore.List(context.Background(), chatstore.TurnQuery{
+			ConvID: convID,
+			Phase:  "final",
+			Limit:  20,
+		})
+		if listErr != nil {
+			return false
+		}
+		turnIDs := map[string]struct{}{}
+		for _, s := range snapshots {
+			turnIDs[s.TurnID] = struct{}{}
+		}
+		return len(turnIDs) >= 2
+	}, 6*time.Second, 100*time.Millisecond, "expected two persisted final turns after runtime switch")
+
+	finalSnapshots, err := turnStore.List(context.Background(), chatstore.TurnQuery{
+		ConvID: convID,
+		Phase:  "final",
+		Limit:  20,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, finalSnapshots)
+
+	seenInventory := false
+	seenPlanner := false
+	for _, snapshot := range finalSnapshots {
+		switch strings.TrimSpace(snapshot.RuntimeKey) {
+		case "inventory@v0":
+			seenInventory = true
+		case "planner@v1":
+			seenPlanner = true
+		}
+	}
+	require.True(t, seenInventory, "expected at least one final turn with inventory runtime")
+	require.True(t, seenPlanner, "expected at least one final turn with planner runtime")
+
+	currentRuntime := ""
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(srv.URL + "/api/debug/conversations/" + convID)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return false
+		}
+		if v, ok := payload["current_runtime_key"].(string); ok && strings.TrimSpace(v) != "" {
+			currentRuntime = strings.TrimSpace(v)
+		} else if v, ok := payload["runtime_key"].(string); ok {
+			currentRuntime = strings.TrimSpace(v)
+		}
+		return strings.HasPrefix(currentRuntime, "planner")
+	}, 6*time.Second, 100*time.Millisecond, "expected conversation current runtime to converge to planner profile")
+}
+
 func TestProfileE2E_CreateProfile_AppearsInList_UsableImmediately(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
