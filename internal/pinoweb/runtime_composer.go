@@ -78,9 +78,18 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 		return infruntime.ComposedRuntime{}, errors.New("runtime overrides are not allowed for inventory")
 	}
 
+	profileRuntime := req.ResolvedProfileRuntime
+
 	stepSettings, err := settings.NewStepSettingsFromParsedValues(c.parsed)
 	if err != nil {
 		return infruntime.ComposedRuntime{}, errors.Wrap(err, "parse step settings")
+	}
+	effectiveStepSettings := stepSettings.Clone()
+	if profileRuntime != nil && len(profileRuntime.StepSettingsPatch) > 0 {
+		effectiveStepSettings, err = gepprofiles.ApplyRuntimeStepSettingsPatch(stepSettings, profileRuntime.StepSettingsPatch)
+		if err != nil {
+			return infruntime.ComposedRuntime{}, errors.Wrap(err, "apply profile step_settings_patch")
+		}
 	}
 
 	runtimeKey := strings.TrimSpace(req.ProfileKey)
@@ -91,7 +100,6 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 		runtimeKey = "inventory"
 	}
 
-	profileRuntime := req.ResolvedProfileRuntime
 	systemPrompt := strings.TrimSpace(c.options.SystemPrompt)
 	if profileRuntime != nil && strings.TrimSpace(profileRuntime.SystemPrompt) != "" {
 		systemPrompt = strings.TrimSpace(profileRuntime.SystemPrompt)
@@ -119,7 +127,7 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 
 	engine_, err := infruntime.BuildEngineFromSettingsWithMiddlewares(
 		ctx,
-		stepSettings.Clone(),
+		effectiveStepSettings,
 		systemPrompt,
 		resolvedMiddlewares,
 	)
@@ -137,7 +145,7 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 			AllowedTools:        allowedTools,
 			ResolvedMiddlewares: resolvedUses,
 			ProfileRuntime:      profileRuntime,
-			StepSettings:        stepSettings,
+			StepSettings:        effectiveStepSettings,
 		}),
 		SeedSystemPrompt: systemPrompt,
 		AllowedTools:     allowedTools,

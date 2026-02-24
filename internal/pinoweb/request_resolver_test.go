@@ -82,6 +82,17 @@ func TestStrictRequestResolver_UnknownProfileReturnsNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, re.Status)
 }
 
+func TestStrictRequestResolver_UnknownRegistryReturnsNotFound(t *testing.T) {
+	r := newResolverWithProfiles(t)
+	req := httptest.NewRequest(http.MethodPost, "/chat?registry=missing", strings.NewReader(`{"prompt":"hi"}`))
+
+	_, err := r.Resolve(req)
+	require.Error(t, err)
+	var re *webhttp.RequestResolutionError
+	require.ErrorAs(t, err, &re)
+	require.Equal(t, http.StatusNotFound, re.Status)
+}
+
 func newResolverWithProfiles(t *testing.T) *StrictRequestResolver {
 	t.Helper()
 

@@ -2,6 +2,7 @@ package pinoweb
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -224,5 +225,41 @@ func TestRuntimeComposer_RejectsInvalidMiddlewareSchemaPayload(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "resolve middleware") {
 		t.Fatalf("expected middleware resolution context, got: %v", err)
+	}
+}
+
+func TestRuntimeComposer_AppliesProfileStepSettingsPatch(t *testing.T) {
+	composer := newRuntimeComposerWithDefinitions(
+		minimalRuntimeComposerValues(t),
+		RuntimeComposerOptions{RuntimeKey: "inventory"},
+		newRuntimeComposerDefinitionRegistry(t),
+		middlewarecfg.BuildDeps{},
+		nil,
+	)
+
+	res, err := composer.Compose(context.Background(), infruntime.ConversationRuntimeRequest{
+		ProfileKey: "inventory",
+		ResolvedProfileRuntime: &gepprofiles.RuntimeSpec{
+			StepSettingsPatch: map[string]any{
+				"ai-chat": map[string]any{
+					"ai-engine": "patched-engine",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("compose failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(res.RuntimeFingerprint), &payload); err != nil {
+		t.Fatalf("unmarshal runtime fingerprint: %v", err)
+	}
+	stepMeta, ok := payload["step_metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing step_metadata in runtime fingerprint: %#v", payload)
+	}
+	if got, want := stepMeta["ai-engine"], "patched-engine"; got != want {
+		t.Fatalf("step_settings_patch not applied: got=%#v want=%#v", got, want)
 	}
 }
