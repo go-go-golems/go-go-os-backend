@@ -59,6 +59,13 @@ func newRuntimeComposerWithDefinitions(
 	}
 }
 
+func (c *RuntimeComposer) MiddlewareDefinitions() middlewarecfg.DefinitionRegistry {
+	if c == nil {
+		return nil
+	}
+	return c.definitions
+}
+
 func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.ConversationRuntimeRequest) (infruntime.ComposedRuntime, error) {
 	if c == nil || c.parsed == nil {
 		return infruntime.ComposedRuntime{}, errors.New("runtime composer is not configured")

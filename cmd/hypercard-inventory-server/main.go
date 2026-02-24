@@ -199,6 +199,26 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		EnableCurrentProfileCookieRoute: true,
 		WriteActor:                      "hypercard-inventory-server",
 		WriteSource:                     "http-api",
+		MiddlewareDefinitions:           composer.MiddlewareDefinitions(),
+		ExtensionSchemas: []webhttp.ExtensionSchemaDocument{
+			{
+				Key: "inventory.starter_suggestions@v1",
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"items": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "string",
+							},
+							"default": []any{},
+						},
+					},
+					"required":             []any{"items"},
+					"additionalProperties": false,
+				},
+			},
+		},
 	})
 	appMux.HandleFunc("/api/timeline", timelineHandler)
 	appMux.HandleFunc("/api/timeline/", timelineHandler)
