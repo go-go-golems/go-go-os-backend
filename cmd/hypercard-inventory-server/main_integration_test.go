@@ -1018,6 +1018,9 @@ func mustConversationRuntimeKey(t *testing.T, srv *httptest.Server, convID strin
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var payload map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
-	runtimeKey, _ := payload["runtime_key"].(string)
+	runtimeKey, _ := payload["current_runtime_key"].(string)
+	if strings.TrimSpace(runtimeKey) == "" {
+		runtimeKey, _ = payload["runtime_key"].(string)
+	}
 	return strings.TrimSpace(runtimeKey)
 }
