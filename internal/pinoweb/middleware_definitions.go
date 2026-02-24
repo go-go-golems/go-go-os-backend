@@ -12,13 +12,31 @@ import (
 )
 
 type inventoryMiddlewareDefinition struct {
-	name   string
-	schema map[string]any
-	build  func(context.Context, middlewarecfg.BuildDeps, any) (middleware.Middleware, error)
+	name        string
+	version     uint16
+	displayName string
+	description string
+	schema      map[string]any
+	build       func(context.Context, middlewarecfg.BuildDeps, any) (middleware.Middleware, error)
 }
 
 func (d inventoryMiddlewareDefinition) Name() string {
 	return d.name
+}
+
+func (d inventoryMiddlewareDefinition) MiddlewareVersion() uint16 {
+	if d.version == 0 {
+		return 1
+	}
+	return d.version
+}
+
+func (d inventoryMiddlewareDefinition) MiddlewareDisplayName() string {
+	return strings.TrimSpace(d.displayName)
+}
+
+func (d inventoryMiddlewareDefinition) MiddlewareDescription() string {
+	return strings.TrimSpace(d.description)
 }
 
 func (d inventoryMiddlewareDefinition) ConfigJSONSchema() map[string]any {
@@ -60,7 +78,9 @@ func defaultInventoryMiddlewareUses() []gepprofiles.MiddlewareUse {
 
 func newInventoryArtifactPolicyDefinition() middlewarecfg.Definition {
 	schema := map[string]any{
-		"type": "object",
+		"title":       "Inventory Artifact Policy",
+		"description": "Appends inventory artifact policy instructions to assistant turns.",
+		"type":        "object",
 		"properties": map[string]any{
 			"instructions": map[string]any{"type": "string"},
 		},
@@ -71,8 +91,11 @@ func newInventoryArtifactPolicyDefinition() middlewarecfg.Definition {
 	}
 
 	return inventoryMiddlewareDefinition{
-		name:   hypercardPolicyMiddlewareName,
-		schema: schema,
+		name:        hypercardPolicyMiddlewareName,
+		version:     1,
+		displayName: "Artifact Policy",
+		description: "Appends inventory artifact policy instructions to assistant turns.",
+		schema:      schema,
 		build: func(_ context.Context, _ middlewarecfg.BuildDeps, cfg any) (middleware.Middleware, error) {
 			var in input
 			if err := decodeInventoryMiddlewareConfig(cfg, &in); err != nil {
@@ -87,7 +110,9 @@ func newInventoryArtifactPolicyDefinition() middlewarecfg.Definition {
 
 func newInventorySuggestionsPolicyDefinition() middlewarecfg.Definition {
 	schema := map[string]any{
-		"type": "object",
+		"title":       "Inventory Suggestions Policy",
+		"description": "Appends starter-suggestion instructions to assistant turns.",
+		"type":        "object",
 		"properties": map[string]any{
 			"instructions": map[string]any{"type": "string"},
 		},
@@ -98,8 +123,11 @@ func newInventorySuggestionsPolicyDefinition() middlewarecfg.Definition {
 	}
 
 	return inventoryMiddlewareDefinition{
-		name:   hypercardSuggestionsMiddlewareName,
-		schema: schema,
+		name:        hypercardSuggestionsMiddlewareName,
+		version:     1,
+		displayName: "Suggestions Policy",
+		description: "Appends starter-suggestion instructions to assistant turns.",
+		schema:      schema,
 		build: func(_ context.Context, _ middlewarecfg.BuildDeps, cfg any) (middleware.Middleware, error) {
 			var in input
 			if err := decodeInventoryMiddlewareConfig(cfg, &in); err != nil {
@@ -114,7 +142,9 @@ func newInventorySuggestionsPolicyDefinition() middlewarecfg.Definition {
 
 func newInventoryArtifactGeneratorDefinition() middlewarecfg.Definition {
 	schema := map[string]any{
-		"type": "object",
+		"title":       "Inventory Artifact Generator",
+		"description": "Enforces HyperCard widget/card generation constraints.",
+		"type":        "object",
 		"properties": map[string]any{
 			"require_widget": map[string]any{"type": "boolean"},
 			"require_card":   map[string]any{"type": "boolean"},
@@ -127,8 +157,11 @@ func newInventoryArtifactGeneratorDefinition() middlewarecfg.Definition {
 	}
 
 	return inventoryMiddlewareDefinition{
-		name:   hypercardGeneratorMiddlewareName,
-		schema: schema,
+		name:        hypercardGeneratorMiddlewareName,
+		version:     1,
+		displayName: "Artifact Generator",
+		description: "Enforces HyperCard widget/card generation constraints.",
+		schema:      schema,
 		build: func(_ context.Context, _ middlewarecfg.BuildDeps, cfg any) (middleware.Middleware, error) {
 			var in input
 			if err := decodeInventoryMiddlewareConfig(cfg, &in); err != nil {
