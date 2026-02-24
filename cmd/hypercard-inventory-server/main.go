@@ -19,6 +19,7 @@ import (
 	help_cmd "github.com/go-go-golems/glazed/pkg/help/cmd"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
+	plzconfirmbackend "github.com/go-go-golems/plz-confirm/pkg/backend"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -142,6 +143,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	appMux.HandleFunc("/api/timeline", timelineHandler)
 	appMux.HandleFunc("/api/timeline/", timelineHandler)
 	appMux.Handle("/api/", srv.APIHandler())
+	plzconfirmbackend.NewServer().Mount(appMux, "/confirm")
 	appMux.Handle("/", srv.UIHandler())
 
 	httpSrv := srv.HTTPServer()
