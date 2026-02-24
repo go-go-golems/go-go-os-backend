@@ -132,6 +132,7 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 		Description: "Tool-first inventory assistant profile.",
 		Runtime: gepprofiles.RuntimeSpec{
 			SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
+			Middlewares:  inventoryRuntimeMiddlewares(),
 			Tools:        append([]string(nil), inventoryToolNames...),
 		},
 	}, &gepprofiles.Profile{
@@ -140,6 +141,7 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 		Description: "Analysis-focused profile for inventory reporting.",
 		Runtime: gepprofiles.RuntimeSpec{
 			SystemPrompt: "You are an inventory analyst. Explain results with concise evidence.",
+			Middlewares:  inventoryRuntimeMiddlewares(),
 			Tools:        append([]string(nil), inventoryToolNames...),
 		},
 	})
@@ -339,6 +341,39 @@ func TestTimelineEndpoint_ReturnsSnapshot(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	_, ok := payload["convId"]
 	require.True(t, ok, "expected timeline snapshot with convId")
+}
+
+func TestChatHandler_PassesProfileDefaultMiddlewaresToRuntimeComposer(t *testing.T) {
+	captured := make(chan infruntime.ConversationRuntimeRequest, 1)
+	runtimeComposer := infruntime.RuntimeBuilderFunc(func(_ context.Context, req infruntime.ConversationRuntimeRequest) (infruntime.ComposedRuntime, error) {
+		captured <- req
+		return infruntime.ComposedRuntime{
+			Engine:             integrationNoopEngine{},
+			Sink:               integrationNoopSink{},
+			RuntimeKey:         "inventory",
+			RuntimeFingerprint: "fp-inventory",
+			SeedSystemPrompt:   "seed",
+		}, nil
+	})
+
+	srv := newIntegrationServerWithRouterOptions(t, webchat.WithRuntimeComposer(runtimeComposer))
+	defer srv.Close()
+
+	reqBody := []byte(`{"prompt":"hello from integration","conv_id":"conv-int-profile-1","profile":"inventory"}`)
+	resp, err := http.Post(srv.URL+"/chat", "application/json", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	select {
+	case req := <-captured:
+		require.NotNil(t, req.ResolvedProfileRuntime)
+		require.GreaterOrEqual(t, len(req.ResolvedProfileRuntime.Middlewares), 2)
+		require.Equal(t, "inventory_artifact_policy", req.ResolvedProfileRuntime.Middlewares[0].Name)
+		require.Equal(t, "inventory_suggestions_policy", req.ResolvedProfileRuntime.Middlewares[1].Name)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("did not capture runtime composer request")
+	}
 }
 
 func TestProfileAPI_CRUDRoutesAreMounted(t *testing.T) {
