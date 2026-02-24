@@ -554,6 +554,73 @@ func TestProfileE2E_ListSelectChat_RuntimeKeyReflectsSelection(t *testing.T) {
 	require.Equal(t, "analyst@v0", integrationSemRuntimeKey(helloFrame))
 }
 
+func TestProfileE2E_SelectedProfileChange_RebuildsInFlightConversationRuntime(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	selectInventoryResp, err := http.Post(srv.URL+"/api/chat/profile", "application/json", strings.NewReader(`{"slug":"inventory"}`))
+	require.NoError(t, err)
+	defer selectInventoryResp.Body.Close()
+	require.Equal(t, http.StatusOK, selectInventoryResp.StatusCode)
+	inventoryCookie := mustProfileCookie(t, selectInventoryResp)
+
+	const convID = "conv-profile-inflight-switch-1"
+	chatReqInventory, err := http.NewRequest(
+		http.MethodPost,
+		srv.URL+"/chat",
+		strings.NewReader(`{"prompt":"inventory baseline","conv_id":"`+convID+`"}`),
+	)
+	require.NoError(t, err)
+	chatReqInventory.Header.Set("Content-Type", "application/json")
+	chatReqInventory.AddCookie(inventoryCookie)
+	chatRespInventory, err := http.DefaultClient.Do(chatReqInventory)
+	require.NoError(t, err)
+	defer chatRespInventory.Body.Close()
+	require.Equal(t, http.StatusOK, chatRespInventory.StatusCode)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?conv_id=" + convID
+	inventoryHeaders := http.Header{}
+	inventoryHeaders.Add("Cookie", inventoryCookie.String())
+	inventoryConn, _, err := websocket.DefaultDialer.Dial(wsURL, inventoryHeaders)
+	require.NoError(t, err)
+	require.NoError(t, inventoryConn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, inventoryHelloFrame, err := inventoryConn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, "ws.hello", integrationSemEventType(inventoryHelloFrame))
+	require.Equal(t, "inventory@v0", integrationSemRuntimeKey(inventoryHelloFrame))
+	_ = inventoryConn.Close()
+
+	selectAnalystResp, err := http.Post(srv.URL+"/api/chat/profile", "application/json", strings.NewReader(`{"slug":"analyst"}`))
+	require.NoError(t, err)
+	defer selectAnalystResp.Body.Close()
+	require.Equal(t, http.StatusOK, selectAnalystResp.StatusCode)
+	analystCookie := mustProfileCookie(t, selectAnalystResp)
+
+	chatReqAnalyst, err := http.NewRequest(
+		http.MethodPost,
+		srv.URL+"/chat",
+		strings.NewReader(`{"prompt":"switch to analyst","conv_id":"`+convID+`"}`),
+	)
+	require.NoError(t, err)
+	chatReqAnalyst.Header.Set("Content-Type", "application/json")
+	chatReqAnalyst.AddCookie(analystCookie)
+	chatRespAnalyst, err := http.DefaultClient.Do(chatReqAnalyst)
+	require.NoError(t, err)
+	defer chatRespAnalyst.Body.Close()
+	require.Equal(t, http.StatusOK, chatRespAnalyst.StatusCode)
+
+	analystHeaders := http.Header{}
+	analystHeaders.Add("Cookie", analystCookie.String())
+	analystConn, _, err := websocket.DefaultDialer.Dial(wsURL, analystHeaders)
+	require.NoError(t, err)
+	require.NoError(t, analystConn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, analystHelloFrame, err := analystConn.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, "ws.hello", integrationSemEventType(analystHelloFrame))
+	require.Equal(t, "analyst@v0", integrationSemRuntimeKey(analystHelloFrame))
+	_ = analystConn.Close()
+}
+
 func TestProfileE2E_CreateProfile_AppearsInList_UsableImmediately(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
