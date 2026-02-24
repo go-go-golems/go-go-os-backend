@@ -117,15 +117,45 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		AllowedTools: append([]string(nil), inventoryToolNames...),
 	})
 	pinoweb.RegisterInventoryHypercardExtensions()
-	profileRegistry, err := newInMemoryProfileService("inventory", &gepprofiles.Profile{
-		Slug:        gepprofiles.MustProfileSlug("inventory"),
-		DisplayName: "Inventory",
-		Description: "Tool-first inventory assistant profile.",
-		Runtime: gepprofiles.RuntimeSpec{
-			SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
-			Tools:        append([]string(nil), inventoryToolNames...),
+	profileRegistry, err := newInMemoryProfileService(
+		"default",
+		&gepprofiles.Profile{
+			Slug:        gepprofiles.MustProfileSlug("default"),
+			DisplayName: "Default",
+			Description: "Baseline assistant profile with no app-specific middleware configuration.",
+			Runtime: gepprofiles.RuntimeSpec{
+				SystemPrompt: "You are a helpful inventory assistant.",
+				Middlewares:  []gepprofiles.MiddlewareUse{},
+			},
 		},
-	})
+		&gepprofiles.Profile{
+			Slug:        gepprofiles.MustProfileSlug("inventory"),
+			DisplayName: "Inventory",
+			Description: "Tool-first inventory assistant profile.",
+			Runtime: gepprofiles.RuntimeSpec{
+				SystemPrompt: "You are an inventory assistant. Be concise, accurate, and tool-first.",
+				Tools:        append([]string(nil), inventoryToolNames...),
+			},
+		},
+		&gepprofiles.Profile{
+			Slug:        gepprofiles.MustProfileSlug("analyst"),
+			DisplayName: "Analyst",
+			Description: "Analysis-oriented profile for inventory reporting tasks.",
+			Runtime: gepprofiles.RuntimeSpec{
+				SystemPrompt: "You are an inventory analyst. Explain results with concise evidence.",
+				Tools:        append([]string(nil), inventoryToolNames...),
+			},
+		},
+		&gepprofiles.Profile{
+			Slug:        gepprofiles.MustProfileSlug("planner"),
+			DisplayName: "Planner",
+			Description: "Planning-focused profile for restock and operations scenarios.",
+			Runtime: gepprofiles.RuntimeSpec{
+				SystemPrompt: "You are an inventory operations planner. Prioritize actionable next steps.",
+				Tools:        append([]string(nil), inventoryToolNames...),
+			},
+		},
+	)
 	if err != nil {
 		return errors.Wrap(err, "initialize profile registry")
 	}
