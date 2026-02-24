@@ -462,6 +462,25 @@ func TestProfileAPI_CRUDRoutesAreMounted(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, getDeletedResp.StatusCode)
 }
 
+func TestProfileAPI_InvalidSlugAndRegistry_ReturnBadRequest(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	invalidRegistryResp, err := http.Get(srv.URL + "/api/chat/profiles?registry=invalid registry!")
+	require.NoError(t, err)
+	defer invalidRegistryResp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, invalidRegistryResp.StatusCode)
+
+	invalidSlugResp, err := http.Post(
+		srv.URL+"/api/chat/profile",
+		"application/json",
+		strings.NewReader(`{"slug":"not a valid slug!"}`),
+	)
+	require.NoError(t, err)
+	defer invalidSlugResp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, invalidSlugResp.StatusCode)
+}
+
 func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
