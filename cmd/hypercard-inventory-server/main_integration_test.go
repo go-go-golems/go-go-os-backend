@@ -24,10 +24,13 @@ import (
 	chatstore "github.com/go-go-golems/pinocchio/pkg/persistence/chatstore"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
+	plzconfirmbackend "github.com/go-go-golems/plz-confirm/pkg/backend"
+	v1 "github.com/go-go-golems/plz-confirm/proto/generated/go/plz_confirm/v1"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
@@ -349,22 +352,79 @@ func TestProfileAPI_CRUDRoutesAreMounted(t *testing.T) {
 
 	var listed []map[string]any
 	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listed))
-	require.NotEmpty(t, listed)
+	require.GreaterOrEqual(t, len(listed), 2)
+	assertProfileListItemContract(t, listed[0])
+	assertProfileListItemContract(t, listed[1])
+	require.Equal(t, "analyst", listed[0]["slug"])
+	require.Equal(t, "inventory", listed[1]["slug"])
 
 	createResp, err := http.Post(srv.URL+"/api/chat/profiles", "application/json", strings.NewReader(`{
 		"slug":"operator",
 		"display_name":"Operator",
 		"description":"Reads inventory data",
-		"runtime":{"system_prompt":"You are an operator."}
+		"runtime":{"system_prompt":"You are an operator."},
+		"extensions":{"Inventory.Starter_Suggestions@V1":{"items":["show low stock"]}},
+		"set_default":true
 	}`))
 	require.NoError(t, err)
 	defer createResp.Body.Close()
 	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&created))
+	assertProfileDocumentContract(t, created)
+	require.Equal(t, "operator", created["slug"])
+	require.Equal(t, true, created["is_default"])
 
 	getResp, err := http.Get(srv.URL + "/api/chat/profiles/operator")
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&got))
+	assertProfileDocumentContract(t, got)
+	require.Equal(t, "operator", got["slug"])
+	extensions, ok := got["extensions"].(map[string]any)
+	require.True(t, ok)
+	_, ok = extensions["inventory.starter_suggestions@v1"]
+	require.True(t, ok)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, srv.URL+"/api/chat/profiles/operator", strings.NewReader(`{
+		"display_name":"Operator V2",
+		"extensions":{"inventory.starter_suggestions@v1":{"items":["show aging inventory"]}},
+		"expected_version":1
+	}`))
+	require.NoError(t, err)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	defer patchResp.Body.Close()
+	require.Equal(t, http.StatusOK, patchResp.StatusCode)
+	var patched map[string]any
+	require.NoError(t, json.NewDecoder(patchResp.Body).Decode(&patched))
+	assertProfileDocumentContract(t, patched)
+	require.Equal(t, uint64(2), extractProfileVersion(patched))
+
+	setDefaultResp, err := http.Post(srv.URL+"/api/chat/profiles/inventory/default", "application/json", strings.NewReader(`{}`))
+	require.NoError(t, err)
+	defer setDefaultResp.Body.Close()
+	require.Equal(t, http.StatusOK, setDefaultResp.StatusCode)
+	var defaultDoc map[string]any
+	require.NoError(t, json.NewDecoder(setDefaultResp.Body).Decode(&defaultDoc))
+	assertProfileDocumentContract(t, defaultDoc)
+	require.Equal(t, "inventory", defaultDoc["slug"])
+	require.Equal(t, true, defaultDoc["is_default"])
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/chat/profiles/operator?expected_version=2", nil)
+	require.NoError(t, err)
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	require.NoError(t, err)
+	defer deleteResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, deleteResp.StatusCode)
+
+	getDeletedResp, err := http.Get(srv.URL + "/api/chat/profiles/operator")
+	require.NoError(t, err)
+	defer getDeletedResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, getDeletedResp.StatusCode)
 }
 
 func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
@@ -693,6 +753,56 @@ func hasProfileSlug(items []map[string]any, slug string) bool {
 		}
 	}
 	return false
+}
+
+func assertProfileListItemContract(t *testing.T, item map[string]any) {
+	t.Helper()
+	require.NotEmpty(t, item["slug"])
+	assertAllowedContractKeys(
+		t,
+		item,
+		"slug",
+		"display_name",
+		"description",
+		"default_prompt",
+		"extensions",
+		"is_default",
+		"version",
+	)
+}
+
+func assertProfileDocumentContract(t *testing.T, doc map[string]any) {
+	t.Helper()
+	require.NotEmpty(t, doc["registry"])
+	require.NotEmpty(t, doc["slug"])
+	_, hasDefault := doc["is_default"]
+	require.True(t, hasDefault)
+	assertAllowedContractKeys(
+		t,
+		doc,
+		"registry",
+		"slug",
+		"display_name",
+		"description",
+		"runtime",
+		"policy",
+		"metadata",
+		"extensions",
+		"is_default",
+	)
+}
+
+func assertAllowedContractKeys(t *testing.T, payload map[string]any, allowed ...string) {
+	t.Helper()
+	allowedSet := map[string]struct{}{}
+	for _, key := range allowed {
+		allowedSet[key] = struct{}{}
+	}
+	for key := range payload {
+		if _, ok := allowedSet[key]; !ok {
+			t.Fatalf("unexpected profile API contract key: %s", key)
+		}
+	}
 }
 
 func mustProfileCookie(t *testing.T, resp *http.Response) *http.Cookie {
