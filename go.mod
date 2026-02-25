@@ -4,9 +4,9 @@ go 1.25.7
 
 require (
 	github.com/go-go-golems/clay v0.4.0
-	github.com/go-go-golems/geppetto v0.9.1
+	github.com/go-go-golems/geppetto v0.10.0
 	github.com/go-go-golems/glazed v1.0.1
-	github.com/go-go-golems/pinocchio v0.9.0
+	github.com/go-go-golems/pinocchio v0.10.0
 	github.com/go-go-golems/plz-confirm v0.0.4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
