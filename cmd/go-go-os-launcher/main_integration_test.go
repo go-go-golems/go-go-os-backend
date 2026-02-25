@@ -30,6 +30,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/backendhost"
+	"github.com/go-go-golems/hypercard-inventory-chat/internal/launcherui"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
 
@@ -188,6 +189,8 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 		manifest := module.Manifest()
 		require.NoError(t, backendhost.MountNamespacedRoutes(appMux, manifest.AppID, module.MountRoutes))
 	}
+	registerLegacyAliasNotFoundHandlers(appMux)
+	appMux.Handle("/", launcherui.Handler())
 
 	return httptest.NewServer(appMux)
 }

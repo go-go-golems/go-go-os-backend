@@ -216,6 +216,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 			return errors.Wrapf(err, "mount namespaced routes for %q", manifest.AppID)
 		}
 	}
+	registerLegacyAliasNotFoundHandlers(appMux)
 	appMux.Handle("/", launcherui.Handler())
 
 	httpSrv := srv.HTTPServer()
@@ -344,6 +345,21 @@ func inventoryExtensionSchemas() []webhttp.ExtensionSchemaDocument {
 			},
 		},
 	}
+}
+
+func registerLegacyAliasNotFoundHandlers(mux *http.ServeMux) {
+	if mux == nil {
+		return
+	}
+	notFound := func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}
+	mux.HandleFunc("/chat", notFound)
+	mux.HandleFunc("/chat/", notFound)
+	mux.HandleFunc("/ws", notFound)
+	mux.HandleFunc("/ws/", notFound)
+	mux.HandleFunc("/api/timeline", notFound)
+	mux.HandleFunc("/api/timeline/", notFound)
 }
 
 func main() {
