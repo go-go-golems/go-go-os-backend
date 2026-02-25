@@ -481,6 +481,21 @@ func TestProfileAPI_InvalidSlugAndRegistry_ReturnBadRequest(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, invalidSlugResp.StatusCode)
 }
 
+func TestChatAPI_UnknownRegistry_ReturnsNotFound(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	reqBody := strings.NewReader(`{"prompt":"hello from unknown registry","conv_id":"conv-unknown-registry-1"}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/chat?registry=missing", reqBody)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
