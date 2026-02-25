@@ -145,7 +145,9 @@ func upsertSeedInTx(tx *sql.Tx) error {
 	if err != nil {
 		return errors.Wrap(err, "prepare item seed statement")
 	}
-	defer itemStmt.Close()
+	defer func() {
+		_ = itemStmt.Close()
+	}()
 
 	for _, item := range SeedItems {
 		if _, err := itemStmt.ExecContext(ctx, item.SKU, item.Name, item.Category, joinTags(item.Tags), item.Qty, item.Price, item.Cost); err != nil {
@@ -165,7 +167,9 @@ func upsertSeedInTx(tx *sql.Tx) error {
 	if err != nil {
 		return errors.Wrap(err, "prepare sale seed statement")
 	}
-	defer saleStmt.Close()
+	defer func() {
+		_ = saleStmt.Close()
+	}()
 
 	for _, sale := range SeedSales {
 		if _, err := saleStmt.ExecContext(ctx, sale.ID, sale.Date, sale.SKU, sale.Qty, sale.Total); err != nil {
@@ -197,7 +201,9 @@ func (s *Store) SearchItems(ctx context.Context, query string, limit int) ([]Ite
 		if err != nil {
 			return nil, errors.Wrap(err, "query items")
 		}
-		defer rows.Close()
+		defer func() {
+			_ = rows.Close()
+		}()
 		return scanItems(rows)
 	}
 
@@ -215,7 +221,9 @@ func (s *Store) SearchItems(ctx context.Context, query string, limit int) ([]Ite
 	if err != nil {
 		return nil, errors.Wrap(err, "query filtered items")
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	return scanItems(rows)
 }
 
@@ -268,7 +276,9 @@ func (s *Store) LowStock(ctx context.Context, threshold int) ([]Item, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "query low stock")
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 	return scanItems(rows)
 }
 
@@ -294,7 +304,9 @@ func (s *Store) ListRecentSales(ctx context.Context, since string, limit int) ([
 	if err != nil {
 		return nil, errors.Wrap(err, "query sales")
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	sales := make([]Sale, 0)
 	for rows.Next() {

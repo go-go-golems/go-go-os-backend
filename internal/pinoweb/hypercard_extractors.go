@@ -32,7 +32,6 @@ func (e *inventoryWidgetExtractor) NewSession(ctx context.Context, _ events.Even
 	}
 }
 
-
 type inventoryRuntimeCardExtractor struct{}
 
 func (e *inventoryRuntimeCardExtractor) TagPackage() string { return "hypercard" }
@@ -210,7 +209,6 @@ func (s *inventoryWidgetSession) OnCompleted(ctx context.Context, raw []byte, su
 	return evs
 }
 
-
 type inventoryRuntimeCardSession struct {
 	ctx       context.Context
 	itemID    string
@@ -351,7 +349,6 @@ type inventorySuggestionsSession struct {
 	started bool
 }
 
-
 func (s *inventorySuggestionsSession) OnStart(context.Context) []events.Event {
 	return nil
 }
@@ -464,7 +461,7 @@ func NewInventoryEventSinkWrapper(baseCtx context.Context) webchat.EventSinkWrap
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return func(convID string, req infruntime.RuntimeComposeRequest, sink events.EventSink) (events.EventSink, error) {
+	return func(convID string, req infruntime.ConversationRuntimeRequest, sink events.EventSink) (events.EventSink, error) {
 		if sink == nil {
 			return nil, errors.New("event sink is nil")
 		}
