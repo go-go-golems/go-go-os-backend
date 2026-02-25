@@ -23,7 +23,11 @@ func run() error {
 	if err != nil {
 		return errors.Wrap(err, "open inventory db")
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: close inventory db: %v\n", closeErr)
+		}
+	}()
 
 	if err := inventorydb.Migrate(db); err != nil {
 		return errors.Wrap(err, "migrate inventory db")

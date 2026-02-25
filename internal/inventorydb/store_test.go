@@ -30,7 +30,9 @@ func TestMigrateAndSeedAreIdempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "inventory.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
 	require.NoError(t, Migrate(db))
 	require.NoError(t, Seed(db))
@@ -89,7 +91,9 @@ func TestResetAndSeed(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "inventory.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
 	require.NoError(t, Migrate(db))
 	require.NoError(t, Seed(db))

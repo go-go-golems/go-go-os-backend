@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -267,16 +266,4 @@ func registerInventoryRecordSaleTool(reg geptools.ToolRegistry, store *inventory
 		return errors.Wrap(err, "create inventory_record_sale definition")
 	}
 	return reg.RegisterTool("inventory_record_sale", *def)
-}
-
-func toolResultAsMap(result any) (map[string]any, error) {
-	b, err := json.Marshal(result)
-	if err != nil {
-		return nil, errors.Wrap(err, "marshal tool result")
-	}
-	var out map[string]any
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, errors.Wrap(err, "unmarshal tool result")
-	}
-	return out, nil
 }
