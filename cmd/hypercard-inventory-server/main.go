@@ -21,12 +21,10 @@ import (
 	help_cmd "github.com/go-go-golems/glazed/pkg/help/cmd"
 	webchat "github.com/go-go-golems/pinocchio/pkg/webchat"
 	webhttp "github.com/go-go-golems/pinocchio/pkg/webchat/http"
-	plzconfirmbackend "github.com/go-go-golems/plz-confirm/pkg/backend"
-	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
+	"github.com/go-go-golems/hypercard-inventory-chat/internal/backendhost"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/inventorydb"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
@@ -40,6 +38,8 @@ type Command struct {
 
 type serverSettings struct {
 	Root                 string `glazed:"root"`
+	RequiredApps         string `glazed:"required-apps"`
+	LegacyAliases        string `glazed:"legacy-aliases"`
 	InventoryDB          string `glazed:"inventory-db"`
 	InventorySeedOnStart bool   `glazed:"inventory-seed-on-start"`
 	InventoryResetOnBoot bool   `glazed:"inventory-reset-on-start"`
@@ -60,7 +60,9 @@ func NewCommand() (*Command, error) {
 		cmds.WithShort("Serve inventory chat endpoints using Pinocchio webchat"),
 		cmds.WithFlags(
 			fields.New("addr", fields.TypeString, fields.WithDefault(":8091"), fields.WithHelp("HTTP listen address")),
-			fields.New("root", fields.TypeString, fields.WithDefault("/"), fields.WithHelp("Serve handlers under a URL root (for example /chat)")),
+			fields.New("root", fields.TypeString, fields.WithDefault("/"), fields.WithHelp("Serve handlers under a URL root (for example /api/apps/inventory)")),
+			fields.New("required-apps", fields.TypeString, fields.WithDefault("inventory"), fields.WithHelp("Comma-separated backend app IDs required at startup")),
+			fields.New("legacy-aliases", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Comma-separated legacy route aliases (startup fails if forbidden aliases are configured)")),
 			fields.New("idle-timeout-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Stop per-conversation reader after N seconds with no sockets (0=disabled)")),
 			fields.New("evict-idle-seconds", fields.TypeInteger, fields.WithDefault(300), fields.WithHelp("Evict conversations after N seconds idle (0=disabled)")),
 			fields.New("evict-interval-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Sweep idle conversations every N seconds (0=disabled)")),
@@ -182,49 +184,37 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		srv.RegisterTool(name, factory)
 	}
 
-	chatHandler := webhttp.NewChatHandler(srv.ChatService(), requestResolver)
-	wsHandler := webhttp.NewWSHandler(
-		srv.StreamHub(),
-		requestResolver,
-		websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+	moduleRegistry, err := backendhost.NewModuleRegistry(
+		newInventoryBackendModule(
+			srv,
+			requestResolver,
+			profileRegistry,
+			composer.MiddlewareDefinitions(),
+			inventoryExtensionSchemas(),
+		),
 	)
-	timelineHandler := webhttp.NewTimelineHandler(srv.TimelineService(), log.With().Str("component", "inventory-chat").Str("route", "/api/timeline").Logger())
+	if err != nil {
+		return errors.Wrap(err, "create backend module registry")
+	}
+	if err := backendhost.GuardNoLegacyAliases(parseCSV(cfg.LegacyAliases)); err != nil {
+		return errors.Wrap(err, "validate legacy route aliases")
+	}
+	lifecycle := backendhost.NewLifecycleManager(moduleRegistry)
+	if err := lifecycle.Startup(ctx, backendhost.StartupOptions{
+		RequiredAppIDs: parseCSV(cfg.RequiredApps),
+	}); err != nil {
+		return errors.Wrap(err, "start backend module lifecycle")
+	}
+	defer func() { _ = lifecycle.Stop(context.Background()) }()
 
 	appMux := http.NewServeMux()
-	appMux.HandleFunc("/chat", chatHandler)
-	appMux.HandleFunc("/chat/", chatHandler)
-	appMux.HandleFunc("/ws", wsHandler)
-	webhttp.RegisterProfileAPIHandlers(appMux, profileRegistry, webhttp.ProfileAPIHandlerOptions{
-		DefaultRegistrySlug:             gepprofiles.MustRegistrySlug(profileRegistrySlug),
-		EnableCurrentProfileCookieRoute: true,
-		WriteActor:                      "hypercard-inventory-server",
-		WriteSource:                     "http-api",
-		MiddlewareDefinitions:           composer.MiddlewareDefinitions(),
-		ExtensionSchemas: []webhttp.ExtensionSchemaDocument{
-			{
-				Key: "inventory.starter_suggestions@v1",
-				Schema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"items": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "string",
-							},
-							"default": []any{},
-						},
-					},
-					"required":             []any{"items"},
-					"additionalProperties": false,
-				},
-			},
-		},
-	})
-	appMux.HandleFunc("/api/timeline", timelineHandler)
-	appMux.HandleFunc("/api/timeline/", timelineHandler)
-	appMux.Handle("/api/", srv.APIHandler())
-	plzconfirmbackend.NewServer().Mount(appMux, "/confirm")
-	appMux.Handle("/", srv.UIHandler())
+	backendhost.RegisterAppsManifestEndpoint(appMux, moduleRegistry)
+	for _, module := range moduleRegistry.Modules() {
+		manifest := module.Manifest()
+		if err := backendhost.MountNamespacedRoutes(appMux, manifest.AppID, module.MountRoutes); err != nil {
+			return errors.Wrapf(err, "mount namespaced routes for %q", manifest.AppID)
+		}
+	}
 
 	httpSrv := srv.HTTPServer()
 	if httpSrv == nil {
@@ -316,6 +306,41 @@ func inventoryRuntimeMiddlewares() []gepprofiles.MiddlewareUse {
 	return []gepprofiles.MiddlewareUse{
 		{Name: "inventory_artifact_policy", ID: "artifact-policy"},
 		{Name: "inventory_suggestions_policy", ID: "suggestions-policy"},
+	}
+}
+
+func parseCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func inventoryExtensionSchemas() []webhttp.ExtensionSchemaDocument {
+	return []webhttp.ExtensionSchemaDocument{
+		{
+			Key: "inventory.starter_suggestions@v1",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"items": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"default": []any{},
+					},
+				},
+				"required":             []any{"items"},
+				"additionalProperties": false,
+			},
+		},
 	}
 }
 

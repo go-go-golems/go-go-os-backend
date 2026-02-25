@@ -56,9 +56,10 @@ npm exec vitest run apps/inventory/src/features/chat/chatSlice.test.ts apps/inve
 
 ## Key routes
 
-- `POST /chat`
-- `GET /ws?conv_id=<id>`
-- `GET /api/timeline?conv_id=<id>`
+- `POST /api/apps/inventory/chat`
+- `GET /api/apps/inventory/ws?conv_id=<id>`
+- `GET /api/apps/inventory/api/timeline?conv_id=<id>`
+- `GET /api/os/apps`
 
 ## Notes
 
