@@ -1037,8 +1037,16 @@ func TestChatHandler_PersistsTurnSnapshotsWhenTurnStoreConfigured(t *testing.T) 
 		if listErr != nil {
 			return false
 		}
-		return len(snapshots) > 0
-	}, 6*time.Second, 100*time.Millisecond, "expected persisted turn snapshots")
+		if len(snapshots) == 0 {
+			return false
+		}
+		for _, snapshot := range snapshots {
+			if snapshot.Phase == "final" && strings.TrimSpace(snapshot.Payload) != "" {
+				return true
+			}
+		}
+		return false
+	}, 6*time.Second, 100*time.Millisecond, "expected persisted final turn snapshot")
 
 	snapshots, err := turnStore.List(context.Background(), chatstore.TurnQuery{
 		ConvID: convID,

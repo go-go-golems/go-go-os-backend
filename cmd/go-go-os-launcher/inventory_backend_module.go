@@ -89,7 +89,7 @@ func (m *inventoryBackendModule) MountRoutes(mux *http.ServeMux) error {
 	webhttp.RegisterProfileAPIHandlers(mux, m.profileRegistry, webhttp.ProfileAPIHandlerOptions{
 		DefaultRegistrySlug:             gepprofiles.MustRegistrySlug(profileRegistrySlug),
 		EnableCurrentProfileCookieRoute: true,
-		WriteActor:                      "hypercard-inventory-server",
+		WriteActor:                      "go-go-os-launcher",
 		WriteSource:                     "http-api",
 		MiddlewareDefinitions:           m.middlewareDefinitions,
 		ExtensionSchemas:                append([]webhttp.ExtensionSchemaDocument(nil), m.extensionSchemas...),

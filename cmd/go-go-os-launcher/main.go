@@ -26,11 +26,12 @@ import (
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/backendhost"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/inventorydb"
+	"github.com/go-go-golems/hypercard-inventory-chat/internal/launcherui"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
 
 //go:embed static
-var staticFS embed.FS
+var inventoryStaticFS embed.FS
 
 type Command struct {
 	*cmds.CommandDescription
@@ -56,8 +57,8 @@ func NewCommand() (*Command, error) {
 	}
 
 	desc := cmds.NewCommandDescription(
-		"hypercard-inventory-server",
-		cmds.WithShort("Serve inventory chat endpoints using Pinocchio webchat"),
+		"go-go-os-launcher",
+		cmds.WithShort("Serve the go-go-os launcher shell with namespaced backend app modules"),
 		cmds.WithFlags(
 			fields.New("addr", fields.TypeString, fields.WithDefault(":8091"), fields.WithHelp("HTTP listen address")),
 			fields.New("root", fields.TypeString, fields.WithDefault("/"), fields.WithHelp("Serve handlers under a URL root (for example /api/apps/inventory)")),
@@ -172,7 +173,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 	srv, err := webchat.NewServer(
 		ctx,
 		parsed,
-		staticFS,
+		inventoryStaticFS,
 		webchat.WithRuntimeComposer(composer),
 		webchat.WithEventSinkWrapper(pinoweb.NewInventoryEventSinkWrapper(ctx)),
 		webchat.WithDebugRoutesEnabled(os.Getenv("PINOCCHIO_WEBCHAT_DEBUG") == "1"),
@@ -215,6 +216,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 			return errors.Wrapf(err, "mount namespaced routes for %q", manifest.AppID)
 		}
 	}
+	appMux.Handle("/", launcherui.Handler())
 
 	httpSrv := srv.HTTPServer()
 	if httpSrv == nil {
@@ -282,7 +284,7 @@ func newInMemoryProfileService(defaultSlug string, profileDefs ...*gepprofiles.P
 	}
 	store := gepprofiles.NewInMemoryProfileStore()
 	if err := store.UpsertRegistry(context.Background(), registry, gepprofiles.SaveOptions{
-		Actor:  "hypercard-inventory-server",
+		Actor:  "go-go-os-launcher",
 		Source: "builtin",
 	}); err != nil {
 		return nil, err
@@ -346,7 +348,7 @@ func inventoryExtensionSchemas() []webhttp.ExtensionSchemaDocument {
 
 func main() {
 	root := &cobra.Command{
-		Use: "hypercard-inventory-server",
+		Use: "go-go-os-launcher",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return logging.InitLoggerFromCobra(cmd)
 		},
