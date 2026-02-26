@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//go:embed dist
+//go:embed all:dist
 var embeddedDistFS embed.FS
 
 // Handler serves embedded launcher UI assets with SPA fallback.
