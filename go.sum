@@ -124,8 +124,8 @@ github.com/go-go-golems/glazed v1.0.2 h1:0U3AAHoC9zZTbS5JjsSaNUh44upP34L5JEeRvqP
 github.com/go-go-golems/glazed v1.0.2/go.mod h1:wPfTa6h6Ta11RN8zRYKrdfrFJ7x5KIjcKIeXyHij1W8=
 github.com/go-go-golems/go-go-goja v0.4.0 h1:ZsryOWZR8pBsDjyh+lI6NPNtwafD3mrP0Ki/c2X3CWg=
 github.com/go-go-golems/go-go-goja v0.4.0/go.mod h1:oBDrZqxdjrfJnVWRn/MliybokXf8gsBANNiWKOSXfZY=
-github.com/go-go-golems/pinocchio v0.10.0 h1:+Qn8NQ3STqUYcIJg0WYpfmm/sig25jTfOFuNFmvzmfg=
-github.com/go-go-golems/pinocchio v0.10.0/go.mod h1:WSnTWoTo08MQMq03KmZ4eUe68MgCLb1GHrmdXenEgyA=
+github.com/go-go-golems/pinocchio v0.10.1 h1:hk43qcBfQHn3W+EY+6iO9vZk5vBjrbizq3V7AQDX3fo=
+github.com/go-go-golems/pinocchio v0.10.1/go.mod h1:RqPVk3L3QCdZ3AJBgV0g2pk3HwSGsqGquV5zbIXk3y4=
 github.com/go-go-golems/plz-confirm v0.0.4 h1:BiCcTHzMU5FdfUiOzNcUJGGShWViYW86jjnqu+wQBAY=
 github.com/go-go-golems/plz-confirm v0.0.4/go.mod h1:KziWKAMLefUGnZrDj8J8OXoVXcySRDLk2osHX7kPSXM=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
