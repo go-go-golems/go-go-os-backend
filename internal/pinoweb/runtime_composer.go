@@ -74,10 +74,6 @@ func (c *RuntimeComposer) Compose(ctx context.Context, req infruntime.Conversati
 		return infruntime.ComposedRuntime{}, errors.New("compose context is nil")
 	}
 
-	if len(req.RuntimeOverrides) > 0 {
-		return infruntime.ComposedRuntime{}, errors.New("runtime overrides are not allowed for inventory")
-	}
-
 	profileRuntime := req.ResolvedProfileRuntime
 
 	stepSettings, err := settings.NewStepSettingsFromParsedValues(c.parsed)

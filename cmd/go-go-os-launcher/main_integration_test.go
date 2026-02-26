@@ -448,7 +448,7 @@ func TestChatHandler_PassesProfileDefaultMiddlewaresToRuntimeComposer(t *testing
 	srv := newIntegrationServerWithRouterOptions(t, webchat.WithRuntimeComposer(runtimeComposer))
 	defer srv.Close()
 
-	reqBody := []byte(`{"prompt":"hello from integration","conv_id":"conv-int-profile-1","profile":"inventory"}`)
+	reqBody := []byte(`{"prompt":"hello from integration","conv_id":"conv-int-profile-1","runtime_key":"inventory"}`)
 	resp, err := http.Post(srv.URL+integrationChatPath(), "application/json", bytes.NewReader(reqBody))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -570,19 +570,19 @@ func TestProfileAPI_InvalidSlugAndRegistry_ReturnBadRequest(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, invalidSlugResp.StatusCode)
 }
 
-func TestChatAPI_UnknownRegistry_ReturnsNotFound(t *testing.T) {
+func TestChatAPI_UnknownRegistrySelector_IsIgnored(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
 
 	reqBody := strings.NewReader(`{"prompt":"hello from unknown registry","conv_id":"conv-unknown-registry-1"}`)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+integrationChatPath()+"?registry=missing", reqBody)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+integrationChatPath()+"?registry_slug=missing", reqBody)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestConfirmRoutes_CoexistWithChatAndTimelineRoutes(t *testing.T) {
@@ -896,13 +896,13 @@ func TestProfileE2E_CreateProfile_AppearsInList_UsableImmediately(t *testing.T) 
 	chatResp, err := http.Post(
 		srv.URL+integrationChatPath(),
 		"application/json",
-		strings.NewReader(`{"prompt":"run planner","conv_id":"`+convID+`","profile":"planner"}`),
+		strings.NewReader(`{"prompt":"run planner","conv_id":"`+convID+`","runtime_key":"planner"}`),
 	)
 	require.NoError(t, err)
 	defer chatResp.Body.Close()
 	require.Equal(t, http.StatusOK, chatResp.StatusCode)
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + integrationWSPath() + "?conv_id=" + convID + "&profile=planner"
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + integrationWSPath() + "?conv_id=" + convID + "&runtime_key=planner"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
@@ -937,7 +937,7 @@ func TestProfileE2E_UpdateIncrementsVersion_AndRebuildsRuntime(t *testing.T) {
 	chatRespV1, err := http.Post(
 		srv.URL+integrationChatPath(),
 		"application/json",
-		strings.NewReader(`{"prompt":"before update","conv_id":"`+convID+`","profile":"rebuilder"}`),
+		strings.NewReader(`{"prompt":"before update","conv_id":"`+convID+`","runtime_key":"rebuilder"}`),
 	)
 	require.NoError(t, err)
 	defer chatRespV1.Body.Close()
@@ -964,7 +964,7 @@ func TestProfileE2E_UpdateIncrementsVersion_AndRebuildsRuntime(t *testing.T) {
 	chatRespV2, err := http.Post(
 		srv.URL+integrationChatPath(),
 		"application/json",
-		strings.NewReader(`{"prompt":"after update","conv_id":"`+convID+`","profile":"rebuilder"}`),
+		strings.NewReader(`{"prompt":"after update","conv_id":"`+convID+`","runtime_key":"rebuilder"}`),
 	)
 	require.NoError(t, err)
 	defer chatRespV2.Body.Close()
