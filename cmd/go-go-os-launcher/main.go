@@ -44,6 +44,8 @@ type serverSettings struct {
 	RequiredApps         string `glazed:"required-apps"`
 	LegacyAliases        string `glazed:"legacy-aliases"`
 	GEPAScriptsRoot      string `glazed:"gepa-scripts-root"`
+	GEPARunTimeout       int    `glazed:"gepa-run-timeout-seconds"`
+	GEPAMaxConcurrent    int    `glazed:"gepa-max-concurrent-runs"`
 	InventoryDB          string `glazed:"inventory-db"`
 	InventorySeedOnStart bool   `glazed:"inventory-seed-on-start"`
 	InventoryResetOnBoot bool   `glazed:"inventory-reset-on-start"`
@@ -68,6 +70,8 @@ func NewCommand() (*Command, error) {
 			fields.New("required-apps", fields.TypeString, fields.WithDefault("inventory"), fields.WithHelp("Comma-separated backend app IDs required at startup")),
 			fields.New("legacy-aliases", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Comma-separated legacy route aliases (startup fails if forbidden aliases are configured)")),
 			fields.New("gepa-scripts-root", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Comma-separated directories to scan for GEPA scripts (.js/.mjs/.cjs)")),
+			fields.New("gepa-run-timeout-seconds", fields.TypeInteger, fields.WithDefault(30), fields.WithHelp("Timeout in seconds for one GEPA run")),
+			fields.New("gepa-max-concurrent-runs", fields.TypeInteger, fields.WithDefault(4), fields.WithHelp("Max number of GEPA runs in running state")),
 			fields.New("idle-timeout-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Stop per-conversation reader after N seconds with no sockets (0=disabled)")),
 			fields.New("evict-idle-seconds", fields.TypeInteger, fields.WithDefault(300), fields.WithHelp("Evict conversations after N seconds idle (0=disabled)")),
 			fields.New("evict-interval-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Sweep idle conversations every N seconds (0=disabled)")),
@@ -193,6 +197,8 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		ScriptsRoots:       parseCSV(cfg.GEPAScriptsRoot),
 		EnableReflection:   true,
 		RunCompletionDelay: 300 * time.Millisecond,
+		RunTimeout:         time.Duration(cfg.GEPARunTimeout) * time.Second,
+		MaxConcurrentRuns:  cfg.GEPAMaxConcurrent,
 	})
 	if err != nil {
 		return errors.Wrap(err, "create gepa backend module")

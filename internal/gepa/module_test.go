@@ -104,3 +104,72 @@ func TestModule_HealthFailsForMissingRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, module.Health(context.Background()))
 }
+
+func TestModule_RunTimeoutMarksRunFailed(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "timeout.js"), []byte("console.log('timeout')"), 0o600))
+
+	module, err := NewModule(ModuleConfig{
+		ScriptsRoots:       []string{tmp},
+		EnableReflection:   true,
+		RunCompletionDelay: 2 * time.Second,
+		RunTimeout:         100 * time.Millisecond,
+		MaxConcurrentRuns:  2,
+	})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	startReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader([]byte(`{"script_id":"timeout.js"}`)))
+	startRR := httptest.NewRecorder()
+	mux.ServeHTTP(startRR, startReq)
+	require.Equal(t, http.StatusCreated, startRR.Code)
+
+	var startPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startRR.Body).Decode(&startPayload))
+
+	time.Sleep(250 * time.Millisecond)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+startPayload.Run.RunID, nil)
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	require.Equal(t, http.StatusOK, getRR.Code)
+
+	var getPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(getRR.Body).Decode(&getPayload))
+	require.Equal(t, RunStatusFailed, getPayload.Run.Status)
+	require.Equal(t, "run timed out", getPayload.Run.Error)
+}
+
+func TestModule_EnforcesMaxConcurrentRuns(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "one.js"), []byte("console.log('one')"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "two.js"), []byte("console.log('two')"), 0o600))
+
+	module, err := NewModule(ModuleConfig{
+		ScriptsRoots:       []string{tmp},
+		EnableReflection:   true,
+		RunCompletionDelay: 2 * time.Second,
+		RunTimeout:         30 * time.Second,
+		MaxConcurrentRuns:  1,
+	})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader([]byte(`{"script_id":"one.js"}`)))
+	firstRR := httptest.NewRecorder()
+	mux.ServeHTTP(firstRR, firstReq)
+	require.Equal(t, http.StatusCreated, firstRR.Code)
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader([]byte(`{"script_id":"two.js"}`)))
+	secondRR := httptest.NewRecorder()
+	mux.ServeHTTP(secondRR, secondReq)
+	require.Equal(t, http.StatusTooManyRequests, secondRR.Code)
+}

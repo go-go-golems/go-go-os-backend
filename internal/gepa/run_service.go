@@ -2,6 +2,7 @@ package gepa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ const (
 	RunStatusFailed    RunStatus = "failed"
 	RunStatusCanceled  RunStatus = "canceled"
 )
+
+var ErrConcurrencyLimitExceeded = errors.New("concurrent run limit reached")
 
 type StartRunRequest struct {
 	ScriptID  string         `json:"script_id"`
@@ -51,18 +54,30 @@ type InMemoryRunService struct {
 	runs            map[string]*RunRecord
 	cancelFuncs     map[string]context.CancelFunc
 	completionDelay time.Duration
+	runTimeout      time.Duration
+	maxConcurrent   int
 	now             func() time.Time
 }
 
-func NewInMemoryRunService(completionDelay time.Duration) *InMemoryRunService {
+func NewInMemoryRunService(completionDelay, runTimeout time.Duration, maxConcurrent int) *InMemoryRunService {
 	delay := completionDelay
 	if delay <= 0 {
 		delay = 300 * time.Millisecond
+	}
+	limit := maxConcurrent
+	if limit <= 0 {
+		limit = 4
+	}
+	timeout := runTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
 	}
 	return &InMemoryRunService{
 		runs:            map[string]*RunRecord{},
 		cancelFuncs:     map[string]context.CancelFunc{},
 		completionDelay: delay,
+		runTimeout:      timeout,
+		maxConcurrent:   limit,
 		now:             time.Now,
 	}
 }
@@ -77,7 +92,13 @@ func (s *InMemoryRunService) Start(ctx context.Context, script ScriptDescriptor,
 
 	now := s.now()
 	runID := "run-" + uuid.NewString()
-	runCtx, cancel := context.WithCancel(ctx)
+
+	s.mu.Lock()
+	if s.maxConcurrent > 0 && s.runningCountLocked() >= s.maxConcurrent {
+		s.mu.Unlock()
+		return RunRecord{}, fmt.Errorf("%w (limit=%d)", ErrConcurrencyLimitExceeded, s.maxConcurrent)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
 
 	record := &RunRecord{
 		RunID:     runID,
@@ -93,7 +114,6 @@ func (s *InMemoryRunService) Start(ctx context.Context, script ScriptDescriptor,
 		UpdatedAt: now,
 	}
 
-	s.mu.Lock()
 	s.runs[runID] = record
 	s.cancelFuncs[runID] = cancel
 	s.mu.Unlock()
@@ -108,6 +128,17 @@ func (s *InMemoryRunService) completeRunAfterDelay(ctx context.Context, runID st
 
 	select {
 	case <-ctx.Done():
+		s.mu.Lock()
+		record, ok := s.runs[runID]
+		if ok && record.Status == RunStatusRunning && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			now := s.now()
+			record.Status = RunStatusFailed
+			record.Error = "run timed out"
+			record.UpdatedAt = now
+			record.CompletedAt = now
+		}
+		delete(s.cancelFuncs, runID)
+		s.mu.Unlock()
 		return
 	case <-timer.C:
 	}
@@ -203,4 +234,14 @@ func cloneMap(in map[string]any) map[string]any {
 
 func stringsTrimmed(s string) string {
 	return strings.TrimSpace(s)
+}
+
+func (s *InMemoryRunService) runningCountLocked() int {
+	running := 0
+	for _, run := range s.runs {
+		if run != nil && run.Status == RunStatusRunning {
+			running++
+		}
+	}
+	return running
 }

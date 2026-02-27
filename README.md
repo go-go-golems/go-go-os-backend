@@ -65,6 +65,8 @@ Script catalog roots are controlled via:
 
 ```bash
 --gepa-scripts-root "/path/to/scripts,/another/path"
+--gepa-run-timeout-seconds 30
+--gepa-max-concurrent-runs 4
 ```
 
 List scripts:

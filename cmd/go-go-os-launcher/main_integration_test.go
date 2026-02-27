@@ -98,6 +98,8 @@ func newIntegrationGEPAModule(t *testing.T) *gepabackend.Module {
 	module, err := gepabackend.NewModule(gepabackend.ModuleConfig{
 		EnableReflection:   true,
 		RunCompletionDelay: 500 * time.Millisecond,
+		RunTimeout:         30 * time.Second,
+		MaxConcurrentRuns:  4,
 	})
 	require.NoError(t, err)
 	return module

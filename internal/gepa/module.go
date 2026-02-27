@@ -3,6 +3,7 @@ package gepa
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,6 +22,8 @@ type ModuleConfig struct {
 	ScriptsRoots       []string
 	EnableReflection   bool
 	RunCompletionDelay time.Duration
+	RunTimeout         time.Duration
+	MaxConcurrentRuns  int
 }
 
 type Module struct {
@@ -31,7 +34,7 @@ type Module struct {
 
 func NewModule(config ModuleConfig) (*Module, error) {
 	catalog := NewFileScriptCatalog(config.ScriptsRoots)
-	runs := NewInMemoryRunService(config.RunCompletionDelay)
+	runs := NewInMemoryRunService(config.RunCompletionDelay, config.RunTimeout, config.MaxConcurrentRuns)
 	return NewModuleWithDeps(config, catalog, runs)
 }
 
@@ -235,6 +238,10 @@ func (m *Module) handleStartRun(w http.ResponseWriter, req *http.Request) {
 
 	run, err := m.runs.Start(req.Context(), script, payload)
 	if err != nil {
+		if errors.Is(err, ErrConcurrencyLimitExceeded) {
+			writeJSONError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
