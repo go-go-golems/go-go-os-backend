@@ -29,10 +29,16 @@ go run ./go-inventory-chat/cmd/go-go-os-launcher go-go-os-launcher \
 
 - `GET /` launcher shell (embedded `apps/os-launcher` build)
 - `GET /api/os/apps` backend module manifest + health
+- `GET /api/os/apps/<app-id>/reflection` module reflection payload (if implemented)
 - `POST /api/apps/inventory/chat`
 - `GET /api/apps/inventory/ws?conv_id=<id>`
 - `GET /api/apps/inventory/api/timeline?conv_id=<id>`
 - `GET /api/apps/inventory/api/chat/profiles`
+- `GET /api/apps/gepa/scripts`
+- `POST /api/apps/gepa/runs`
+- `GET /api/apps/gepa/runs/<run-id>`
+- `POST /api/apps/gepa/runs/<run-id>/cancel`
+- `GET /api/apps/gepa/schemas/<schema-id>`
 
 Hard-cut route policy:
 
@@ -48,6 +54,50 @@ go test ./...
 ```bash
 cd ..
 npm run launcher:smoke
+```
+
+## GEPA module config and curl runbook
+
+The launcher now mounts a non-required internal GEPA backend module under
+`/api/apps/gepa/*`.
+
+Script catalog roots are controlled via:
+
+```bash
+--gepa-scripts-root "/path/to/scripts,/another/path"
+```
+
+List scripts:
+
+```bash
+curl -s localhost:8091/api/apps/gepa/scripts | jq
+```
+
+Start a run:
+
+```bash
+curl -s -X POST localhost:8091/api/apps/gepa/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"script_id":"example.js","arguments":["--dry-run"]}' | jq
+```
+
+Get run status:
+
+```bash
+curl -s localhost:8091/api/apps/gepa/runs/<run-id> | jq
+```
+
+Cancel a run:
+
+```bash
+curl -s -X POST localhost:8091/api/apps/gepa/runs/<run-id>/cancel | jq
+```
+
+Inspect reflection and schemas:
+
+```bash
+curl -s localhost:8091/api/os/apps/gepa/reflection | jq
+curl -s localhost:8091/api/apps/gepa/schemas/gepa.runs.start.request.v1 | jq
 ```
 
 ## Notes
