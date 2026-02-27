@@ -18,6 +18,18 @@ type fakeModule struct {
 	startErr  error
 	stopErr   error
 	healthErr error
+
+	reflectionDoc *ModuleReflectionDocument
+	reflectionErr error
+}
+
+type fakePlainModule struct {
+	manifest  AppBackendManifest
+	mountFn   func(mux *http.ServeMux) error
+	initErr   error
+	startErr  error
+	stopErr   error
+	healthErr error
 }
 
 func (f *fakeModule) Manifest() AppBackendManifest {
@@ -44,6 +56,37 @@ func (f *fakeModule) Stop(context.Context) error {
 }
 
 func (f *fakeModule) Health(context.Context) error {
+	return f.healthErr
+}
+
+func (f *fakeModule) Reflection(context.Context) (*ModuleReflectionDocument, error) {
+	return f.reflectionDoc, f.reflectionErr
+}
+
+func (f *fakePlainModule) Manifest() AppBackendManifest {
+	return f.manifest
+}
+
+func (f *fakePlainModule) MountRoutes(mux *http.ServeMux) error {
+	if f.mountFn != nil {
+		return f.mountFn(mux)
+	}
+	return nil
+}
+
+func (f *fakePlainModule) Init(context.Context) error {
+	return f.initErr
+}
+
+func (f *fakePlainModule) Start(context.Context) error {
+	return f.startErr
+}
+
+func (f *fakePlainModule) Stop(context.Context) error {
+	return f.stopErr
+}
+
+func (f *fakePlainModule) Health(context.Context) error {
 	return f.healthErr
 }
 
@@ -103,8 +146,14 @@ func TestLifecycleManager_RequiredHealthFailureFailsStartup(t *testing.T) {
 
 func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
 	registry, err := NewModuleRegistry(
-		&fakeModule{manifest: AppBackendManifest{AppID: "inventory", Name: "Inventory", Required: true, Capabilities: []string{"chat"}}},
-		&fakeModule{manifest: AppBackendManifest{AppID: "crm", Name: "CRM"}, healthErr: errors.New("offline")},
+		&fakeModule{
+			manifest: AppBackendManifest{AppID: "inventory", Name: "Inventory", Required: true, Capabilities: []string{"chat"}},
+			reflectionDoc: &ModuleReflectionDocument{
+				AppID: "inventory",
+				Name:  "Inventory",
+			},
+		},
+		&fakePlainModule{manifest: AppBackendManifest{AppID: "crm", Name: "CRM"}, healthErr: errors.New("offline")},
 	)
 	require.NoError(t, err)
 
@@ -121,7 +170,68 @@ func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
 	require.Len(t, payload.Apps, 2)
 	require.Equal(t, "inventory", payload.Apps[0].AppID)
 	require.True(t, payload.Apps[0].Healthy)
+	require.NotNil(t, payload.Apps[0].Reflection)
+	require.Equal(t, "/api/os/apps/inventory/reflection", payload.Apps[0].Reflection.URL)
 	require.Equal(t, "crm", payload.Apps[1].AppID)
 	require.False(t, payload.Apps[1].Healthy)
 	require.Equal(t, "offline", payload.Apps[1].HealthError)
+	require.Nil(t, payload.Apps[1].Reflection)
+}
+
+func TestRegisterAppsManifestEndpoint_ModuleReflectionRoute_ReturnsPayload(t *testing.T) {
+	registry, err := NewModuleRegistry(
+		&fakeModule{
+			manifest: AppBackendManifest{AppID: "inventory", Name: "Inventory"},
+			reflectionDoc: &ModuleReflectionDocument{
+				AppID:   "inventory",
+				Name:    "Inventory",
+				Summary: "inventory reflection",
+				APIs: []ReflectionAPI{
+					{
+						ID:     "list",
+						Method: http.MethodGet,
+						Path:   "/api/apps/inventory/chat",
+					},
+				},
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	RegisterAppsManifestEndpoint(mux, registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/os/apps/inventory/reflection", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var payload ModuleReflectionDocument
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&payload))
+	require.Equal(t, "inventory", payload.AppID)
+	require.Equal(t, "Inventory", payload.Name)
+	require.Len(t, payload.APIs, 1)
+	require.Equal(t, "/api/apps/inventory/chat", payload.APIs[0].Path)
+}
+
+func TestRegisterAppsManifestEndpoint_ModuleReflectionRoute_NotImplemented(t *testing.T) {
+	registry, err := NewModuleRegistry(
+		&fakePlainModule{
+			manifest: AppBackendManifest{AppID: "inventory", Name: "Inventory"},
+		},
+	)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	RegisterAppsManifestEndpoint(mux, registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/os/apps/inventory/reflection", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNotImplemented, rr.Code)
+
+	reqUnknown := httptest.NewRequest(http.MethodGet, "/api/os/apps/unknown/reflection", nil)
+	rrUnknown := httptest.NewRecorder()
+	mux.ServeHTTP(rrUnknown, reqUnknown)
+	require.Equal(t, http.StatusNotFound, rrUnknown.Code)
 }
