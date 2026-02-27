@@ -30,22 +30,19 @@ type ModuleConfig struct {
 
 type Module struct {
 	config  ModuleConfig
-	catalog ScriptCatalog
-	runs    RunService
+	runtime GepaRuntime
 }
 
 func NewModule(config ModuleConfig) (*Module, error) {
 	catalog := NewFileScriptCatalog(config.ScriptsRoots)
 	runs := NewInMemoryRunService(config.RunCompletionDelay, config.RunTimeout, config.MaxConcurrentRuns)
-	return NewModuleWithDeps(config, catalog, runs)
+	runtime := NewInMemoryRuntime(catalog, runs)
+	return NewModuleWithRuntime(config, runtime)
 }
 
-func NewModuleWithDeps(config ModuleConfig, catalog ScriptCatalog, runs RunService) (*Module, error) {
-	if catalog == nil {
-		return nil, fmt.Errorf("gepa script catalog is nil")
-	}
-	if runs == nil {
-		return nil, fmt.Errorf("gepa run service is nil")
+func NewModuleWithRuntime(config ModuleConfig, runtime GepaRuntime) (*Module, error) {
+	if runtime == nil {
+		return nil, fmt.Errorf("gepa runtime is nil")
 	}
 	if len(config.ScriptsRoots) > 0 {
 		roots := make([]string, 0, len(config.ScriptsRoots))
@@ -61,8 +58,7 @@ func NewModuleWithDeps(config ModuleConfig, catalog ScriptCatalog, runs RunServi
 	}
 	return &Module{
 		config:  config,
-		catalog: catalog,
-		runs:    runs,
+		runtime: runtime,
 	}, nil
 }
 
@@ -219,7 +215,7 @@ func (m *Module) handleListScripts(w http.ResponseWriter, req *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	scripts, err := m.catalog.List(req.Context())
+	scripts, err := m.runtime.ListScripts(req.Context())
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -244,22 +240,16 @@ func (m *Module) handleStartRun(w http.ResponseWriter, req *http.Request) {
 	}
 	payload.ScriptID = strings.TrimSpace(payload.ScriptID)
 	if payload.ScriptID == "" {
-		writeJSONError(w, http.StatusBadRequest, "script_id is required")
+		writeJSONError(w, http.StatusBadRequest, ErrScriptIDRequired.Error())
 		return
 	}
 
-	script, found, err := m.findScript(req.Context(), payload.ScriptID)
+	run, err := m.runtime.StartRun(req.Context(), payload)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !found {
-		writeJSONError(w, http.StatusBadRequest, "unknown script_id")
-		return
-	}
-
-	run, err := m.runs.Start(req.Context(), script, payload)
-	if err != nil {
+		if errors.Is(err, ErrScriptIDRequired) || errors.Is(err, ErrUnknownScriptID) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if errors.Is(err, ErrConcurrencyLimitExceeded) {
 			writeJSONError(w, http.StatusTooManyRequests, err.Error())
 			return
@@ -288,7 +278,7 @@ func (m *Module) handleRunsSubresource(w http.ResponseWriter, req *http.Request)
 			return
 		}
 		runID := strings.TrimSpace(parts[0])
-		run, ok, err := m.runs.Get(req.Context(), runID)
+		run, ok, err := m.runtime.GetRun(req.Context(), runID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -307,7 +297,7 @@ func (m *Module) handleRunsSubresource(w http.ResponseWriter, req *http.Request)
 			return
 		}
 		runID := strings.TrimSpace(parts[0])
-		run, ok, err := m.runs.Cancel(req.Context(), runID)
+		run, ok, err := m.runtime.CancelRun(req.Context(), runID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -384,7 +374,7 @@ func (m *Module) handleRunEvents(w http.ResponseWriter, req *http.Request, runID
 	flusher.Flush()
 
 	for {
-		events, found, err := m.runs.Events(req.Context(), runID, afterSeq)
+		events, found, err := m.runtime.ListEvents(req.Context(), runID, afterSeq)
 		if err != nil {
 			return
 		}
@@ -405,7 +395,7 @@ func (m *Module) handleRunEvents(w http.ResponseWriter, req *http.Request, runID
 			afterSeq = event.Seq
 		}
 
-		run, foundRun, err := m.runs.Get(req.Context(), runID)
+		run, foundRun, err := m.runtime.GetRun(req.Context(), runID)
 		if err != nil {
 			return
 		}
@@ -425,7 +415,7 @@ func (m *Module) handleRunEvents(w http.ResponseWriter, req *http.Request, runID
 }
 
 func (m *Module) handleRunTimeline(w http.ResponseWriter, req *http.Request, runID string) {
-	run, found, err := m.runs.Get(req.Context(), runID)
+	run, found, err := m.runtime.GetRun(req.Context(), runID)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -434,7 +424,7 @@ func (m *Module) handleRunTimeline(w http.ResponseWriter, req *http.Request, run
 		http.NotFound(w, req)
 		return
 	}
-	events, found, err := m.runs.Events(req.Context(), runID, 0)
+	events, found, err := m.runtime.ListEvents(req.Context(), runID, 0)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -464,19 +454,6 @@ func (m *Module) handleRunTimeline(w http.ResponseWriter, req *http.Request, run
 		"counts":      counts,
 		"events":      events,
 	})
-}
-
-func (m *Module) findScript(ctx context.Context, scriptID string) (ScriptDescriptor, bool, error) {
-	scripts, err := m.catalog.List(ctx)
-	if err != nil {
-		return ScriptDescriptor{}, false, err
-	}
-	for _, script := range scripts {
-		if script.ID == scriptID {
-			return script, true, nil
-		}
-	}
-	return ScriptDescriptor{}, false, nil
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {
