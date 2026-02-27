@@ -541,6 +541,63 @@ func TestGEPAModule_RunTimelineAndEventsEndpoints(t *testing.T) {
 	require.NotEmpty(t, timeline["status"])
 }
 
+func TestGEPAModule_CancelEndpointRunningAndTerminalRun(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	scriptsResp, err := http.Get(srv.URL + integrationGEPAScriptsPath())
+	require.NoError(t, err)
+	defer scriptsResp.Body.Close()
+	require.Equal(t, http.StatusOK, scriptsResp.StatusCode)
+
+	var scriptsPayload struct {
+		Scripts []map[string]any `json:"scripts"`
+	}
+	require.NoError(t, json.NewDecoder(scriptsResp.Body).Decode(&scriptsPayload))
+	if len(scriptsPayload.Scripts) == 0 {
+		t.Skip("no local scripts discovered in integration environment")
+	}
+	scriptID, _ := scriptsPayload.Scripts[0]["id"].(string)
+	require.NotEmpty(t, scriptID)
+
+	startBody := fmt.Sprintf(`{"script_id":"%s"}`, scriptID)
+	startResp, err := http.Post(srv.URL+integrationGEPARunsPath(), "application/json", strings.NewReader(startBody))
+	require.NoError(t, err)
+	defer startResp.Body.Close()
+	require.Equal(t, http.StatusCreated, startResp.StatusCode)
+
+	var startPayload struct {
+		Run map[string]any `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startResp.Body).Decode(&startPayload))
+	runID, _ := startPayload.Run["run_id"].(string)
+	require.NotEmpty(t, runID)
+
+	cancelURL := srv.URL + integrationGEPARunsPath() + "/" + runID + "/cancel"
+	cancelResp, err := http.Post(cancelURL, "application/json", nil)
+	require.NoError(t, err)
+	defer cancelResp.Body.Close()
+	require.Equal(t, http.StatusOK, cancelResp.StatusCode)
+
+	var cancelPayload struct {
+		Run map[string]any `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(cancelResp.Body).Decode(&cancelPayload))
+	require.Equal(t, "canceled", cancelPayload.Run["status"])
+
+	// Canceling again should stay terminal and still return 200.
+	cancelAgainResp, err := http.Post(cancelURL, "application/json", nil)
+	require.NoError(t, err)
+	defer cancelAgainResp.Body.Close()
+	require.Equal(t, http.StatusOK, cancelAgainResp.StatusCode)
+
+	var cancelAgainPayload struct {
+		Run map[string]any `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(cancelAgainResp.Body).Decode(&cancelAgainPayload))
+	require.Equal(t, "canceled", cancelAgainPayload.Run["status"])
+}
+
 func TestLegacyAliasRoutes_AreNotMounted(t *testing.T) {
 	srv := newIntegrationServer(t)
 	defer srv.Close()
