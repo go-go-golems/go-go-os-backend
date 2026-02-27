@@ -1,4 +1,4 @@
-# go-inventory-chat
+# go-go-os
 
 Inventory backend module host for the launcher-first `go-go-os` runtime.
 
@@ -10,19 +10,19 @@ Build and run the single launcher binary (embedded frontend + backend modules):
 npm run launcher:binary:build
 ./build/go-go-os-launcher go-go-os-launcher \
   --addr :8091 \
-  --inventory-db ./go-inventory-chat/data/inventory.db \
-  --timeline-db ./go-inventory-chat/data/webchat-timeline.db \
-  --turns-db ./go-inventory-chat/data/webchat-turns.db
+  --inventory-db ./go-go-os/data/inventory.db \
+  --timeline-db ./go-go-os/data/webchat-timeline.db \
+  --turns-db ./go-go-os/data/webchat-turns.db
 ```
 
 Run directly without prebuilding the binary:
 
 ```bash
-go run ./go-inventory-chat/cmd/go-go-os-launcher go-go-os-launcher \
+go run ./go-go-os/cmd/go-go-os-launcher go-go-os-launcher \
   --addr :8091 \
-  --inventory-db ./go-inventory-chat/data/inventory.db \
-  --timeline-db ./go-inventory-chat/data/webchat-timeline.db \
-  --turns-db ./go-inventory-chat/data/webchat-turns.db
+  --inventory-db ./go-go-os/data/inventory.db \
+  --timeline-db ./go-go-os/data/webchat-timeline.db \
+  --turns-db ./go-go-os/data/webchat-turns.db
 ```
 
 ## Key routes
@@ -49,7 +49,7 @@ Hard-cut route policy:
 ## Validation
 
 ```bash
-cd go-inventory-chat
+cd go-go-os
 go test ./...
 ```
 
