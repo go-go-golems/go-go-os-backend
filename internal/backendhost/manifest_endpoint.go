@@ -7,14 +7,14 @@ import (
 )
 
 type AppManifestDocument struct {
-	AppID        string   `json:"app_id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Required     bool     `json:"required"`
-	Capabilities []string `json:"capabilities,omitempty"`
+	AppID        string                     `json:"app_id"`
+	Name         string                     `json:"name"`
+	Description  string                     `json:"description,omitempty"`
+	Required     bool                       `json:"required"`
+	Capabilities []string                   `json:"capabilities,omitempty"`
 	Reflection   *AppManifestReflectionHint `json:"reflection,omitempty"`
-	Healthy      bool     `json:"healthy"`
-	HealthError  string   `json:"health_error,omitempty"`
+	Healthy      bool                       `json:"healthy"`
+	HealthError  string                     `json:"health_error,omitempty"`
 }
 
 type AppManifestReflectionHint struct {

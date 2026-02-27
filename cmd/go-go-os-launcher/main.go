@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	clay "github.com/go-go-golems/clay/pkg"
 	gepprofiles "github.com/go-go-golems/geppetto/pkg/profiles"
@@ -25,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/backendhost"
+	gepabackend "github.com/go-go-golems/hypercard-inventory-chat/internal/gepa"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/inventorydb"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/launcherui"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
@@ -41,6 +43,7 @@ type serverSettings struct {
 	Root                 string `glazed:"root"`
 	RequiredApps         string `glazed:"required-apps"`
 	LegacyAliases        string `glazed:"legacy-aliases"`
+	GEPAScriptsRoot      string `glazed:"gepa-scripts-root"`
 	InventoryDB          string `glazed:"inventory-db"`
 	InventorySeedOnStart bool   `glazed:"inventory-seed-on-start"`
 	InventoryResetOnBoot bool   `glazed:"inventory-reset-on-start"`
@@ -64,6 +67,7 @@ func NewCommand() (*Command, error) {
 			fields.New("root", fields.TypeString, fields.WithDefault("/"), fields.WithHelp("Serve handlers under a URL root (for example /api/apps/inventory)")),
 			fields.New("required-apps", fields.TypeString, fields.WithDefault("inventory"), fields.WithHelp("Comma-separated backend app IDs required at startup")),
 			fields.New("legacy-aliases", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Comma-separated legacy route aliases (startup fails if forbidden aliases are configured)")),
+			fields.New("gepa-scripts-root", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Comma-separated directories to scan for GEPA scripts (.js/.mjs/.cjs)")),
 			fields.New("idle-timeout-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Stop per-conversation reader after N seconds with no sockets (0=disabled)")),
 			fields.New("evict-idle-seconds", fields.TypeInteger, fields.WithDefault(300), fields.WithHelp("Evict conversations after N seconds idle (0=disabled)")),
 			fields.New("evict-interval-seconds", fields.TypeInteger, fields.WithDefault(60), fields.WithHelp("Sweep idle conversations every N seconds (0=disabled)")),
@@ -185,6 +189,15 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 		srv.RegisterTool(name, factory)
 	}
 
+	gepaModule, err := gepabackend.NewModule(gepabackend.ModuleConfig{
+		ScriptsRoots:       parseCSV(cfg.GEPAScriptsRoot),
+		EnableReflection:   true,
+		RunCompletionDelay: 300 * time.Millisecond,
+	})
+	if err != nil {
+		return errors.Wrap(err, "create gepa backend module")
+	}
+
 	moduleRegistry, err := backendhost.NewModuleRegistry(
 		newInventoryBackendModule(
 			srv,
@@ -193,6 +206,7 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *values.Values, _ io
 			composer.MiddlewareDefinitions(),
 			inventoryExtensionSchemas(),
 		),
+		gepaModule,
 	)
 	if err != nil {
 		return errors.Wrap(err, "create backend module registry")

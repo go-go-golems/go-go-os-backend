@@ -1,0 +1,106 @@
+package gepa
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestModule_ListScriptsAndStartRun(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "hello.js"), []byte("console.log('hi')"), 0o600))
+
+	module, err := NewModule(ModuleConfig{
+		ScriptsRoots:       []string{tmp},
+		EnableReflection:   true,
+		RunCompletionDelay: 2 * time.Second,
+	})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	scriptsReq := httptest.NewRequest(http.MethodGet, "/scripts", nil)
+	scriptsRR := httptest.NewRecorder()
+	mux.ServeHTTP(scriptsRR, scriptsReq)
+	require.Equal(t, http.StatusOK, scriptsRR.Code)
+
+	var scriptsPayload struct {
+		Scripts []ScriptDescriptor `json:"scripts"`
+	}
+	require.NoError(t, json.NewDecoder(scriptsRR.Body).Decode(&scriptsPayload))
+	require.Len(t, scriptsPayload.Scripts, 1)
+	require.Equal(t, "hello.js", scriptsPayload.Scripts[0].ID)
+
+	startBody := []byte(`{"script_id":"hello.js","arguments":["--once"]}`)
+	startReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(startBody))
+	startRR := httptest.NewRecorder()
+	mux.ServeHTTP(startRR, startReq)
+	require.Equal(t, http.StatusCreated, startRR.Code)
+
+	var startPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startRR.Body).Decode(&startPayload))
+	require.Equal(t, "hello.js", startPayload.Run.ScriptID)
+	require.Equal(t, RunStatusRunning, startPayload.Run.Status)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/runs/"+startPayload.Run.RunID, nil)
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	require.Equal(t, http.StatusOK, getRR.Code)
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/runs/"+startPayload.Run.RunID+"/cancel", nil)
+	cancelRR := httptest.NewRecorder()
+	mux.ServeHTTP(cancelRR, cancelReq)
+	require.Equal(t, http.StatusOK, cancelRR.Code)
+
+	var cancelPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(cancelRR.Body).Decode(&cancelPayload))
+	require.Equal(t, RunStatusCanceled, cancelPayload.Run.Status)
+}
+
+func TestModule_ReflectionAndSchemas(t *testing.T) {
+	module, err := NewModule(ModuleConfig{
+		EnableReflection: true,
+	})
+	require.NoError(t, err)
+
+	doc, err := module.Reflection(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, AppID, doc.AppID)
+	require.NotEmpty(t, doc.APIs)
+	require.NotEmpty(t, doc.Schemas)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	schemaReq := httptest.NewRequest(http.MethodGet, "/schemas/gepa.runs.start.request.v1", nil)
+	schemaRR := httptest.NewRecorder()
+	mux.ServeHTTP(schemaRR, schemaReq)
+	require.Equal(t, http.StatusOK, schemaRR.Code)
+
+	unknownReq := httptest.NewRequest(http.MethodGet, "/schemas/does.not.exist", nil)
+	unknownRR := httptest.NewRecorder()
+	mux.ServeHTTP(unknownRR, unknownReq)
+	require.Equal(t, http.StatusNotFound, unknownRR.Code)
+}
+
+func TestModule_HealthFailsForMissingRoot(t *testing.T) {
+	module, err := NewModule(ModuleConfig{
+		EnableReflection: true,
+		ScriptsRoots:     []string{"/path/that/does/not/exist"},
+	})
+	require.NoError(t, err)
+	require.Error(t, module.Health(context.Background()))
+}

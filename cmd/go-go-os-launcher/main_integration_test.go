@@ -30,6 +30,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/backendhost"
+	gepabackend "github.com/go-go-golems/hypercard-inventory-chat/internal/gepa"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/launcherui"
 	"github.com/go-go-golems/hypercard-inventory-chat/internal/pinoweb"
 )
@@ -75,6 +76,7 @@ type integrationNoopSink struct{}
 func (integrationNoopSink) PublishEvent(events.Event) error { return nil }
 
 const integrationAppBasePath = "/api/apps/inventory"
+const integrationGepaAppBasePath = "/api/apps/gepa"
 
 func integrationChatPath() string           { return integrationAppBasePath + "/chat" }
 func integrationWSPath() string             { return integrationAppBasePath + "/ws" }
@@ -82,12 +84,23 @@ func integrationTimelinePath() string       { return integrationAppBasePath + "/
 func integrationProfilesPath() string       { return integrationAppBasePath + "/api/chat/profiles" }
 func integrationCurrentProfilePath() string { return integrationAppBasePath + "/api/chat/profile" }
 func integrationConfirmPath() string        { return integrationAppBasePath + "/confirm" }
+func integrationGEPAScriptsPath() string    { return integrationGepaAppBasePath + "/scripts" }
 func integrationDebugConversationsPath() string {
 	return integrationAppBasePath + "/api/debug/conversations"
 }
 
 func integrationProfilePath(slug string) string {
 	return integrationProfilesPath() + "/" + strings.TrimSpace(slug)
+}
+
+func newIntegrationGEPAModule(t *testing.T) *gepabackend.Module {
+	t.Helper()
+	module, err := gepabackend.NewModule(gepabackend.ModuleConfig{
+		EnableReflection:   true,
+		RunCompletionDelay: 500 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	return module
 }
 
 func newIntegrationServer(t *testing.T) *httptest.Server {
@@ -174,6 +187,7 @@ func newIntegrationServerWithRouterOptions(t *testing.T, extraOptions ...webchat
 			nil,
 			inventoryExtensionSchemas(),
 		),
+		newIntegrationGEPAModule(t),
 	)
 	require.NoError(t, err)
 
@@ -246,6 +260,7 @@ func TestWSHandler_EmitsHypercardLifecycleEvents(t *testing.T) {
 			nil,
 			inventoryExtensionSchemas(),
 		),
+		newIntegrationGEPAModule(t),
 	)
 	require.NoError(t, err)
 
@@ -413,6 +428,62 @@ func TestOSAppsEndpoint_ListsInventoryModuleCapabilities(t *testing.T) {
 		}
 	}
 	require.True(t, inventoryFound, "expected inventory backend module in /api/os/apps payload")
+}
+
+func TestOSAppsEndpoint_ListsGEPAModuleReflectionMetadata(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/os/apps")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload struct {
+		Apps []map[string]any `json:"apps"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+
+	gepaFound := false
+	for _, app := range payload.Apps {
+		if appID, _ := app["app_id"].(string); appID == "gepa" {
+			gepaFound = true
+			require.Equal(t, "GEPA", app["name"])
+			require.Equal(t, true, app["healthy"])
+			reflection, ok := app["reflection"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, true, reflection["available"])
+			require.Equal(t, "/api/os/apps/gepa/reflection", reflection["url"])
+		}
+	}
+	require.True(t, gepaFound, "expected gepa backend module in /api/os/apps payload")
+}
+
+func TestGEPAModule_ReflectionAndScriptsEndpoints(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	reflectionResp, err := http.Get(srv.URL + "/api/os/apps/gepa/reflection")
+	require.NoError(t, err)
+	defer reflectionResp.Body.Close()
+	require.Equal(t, http.StatusOK, reflectionResp.StatusCode)
+
+	var reflection map[string]any
+	require.NoError(t, json.NewDecoder(reflectionResp.Body).Decode(&reflection))
+	require.Equal(t, "gepa", reflection["app_id"])
+	apis, ok := reflection["apis"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, apis)
+
+	scriptsResp, err := http.Get(srv.URL + integrationGEPAScriptsPath())
+	require.NoError(t, err)
+	defer scriptsResp.Body.Close()
+	require.Equal(t, http.StatusOK, scriptsResp.StatusCode)
+
+	var scriptsPayload map[string]any
+	require.NoError(t, json.NewDecoder(scriptsResp.Body).Decode(&scriptsPayload))
+	_, ok = scriptsPayload["scripts"].([]any)
+	require.True(t, ok)
 }
 
 func TestLegacyAliasRoutes_AreNotMounted(t *testing.T) {
