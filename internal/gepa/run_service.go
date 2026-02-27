@@ -43,15 +43,26 @@ type RunRecord struct {
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
+type RunEvent struct {
+	Seq       int64          `json:"seq"`
+	RunID     string         `json:"run_id"`
+	Type      string         `json:"type"`
+	Timestamp time.Time      `json:"timestamp"`
+	Payload   map[string]any `json:"payload,omitempty"`
+}
+
 type RunService interface {
 	Start(ctx context.Context, script ScriptDescriptor, request StartRunRequest) (RunRecord, error)
 	Get(ctx context.Context, runID string) (RunRecord, bool, error)
 	Cancel(ctx context.Context, runID string) (RunRecord, bool, error)
+	Events(ctx context.Context, runID string, afterSeq int64) ([]RunEvent, bool, error)
 }
 
 type InMemoryRunService struct {
 	mu              sync.RWMutex
 	runs            map[string]*RunRecord
+	events          map[string][]RunEvent
+	nextSeq         map[string]int64
 	cancelFuncs     map[string]context.CancelFunc
 	completionDelay time.Duration
 	runTimeout      time.Duration
@@ -74,6 +85,8 @@ func NewInMemoryRunService(completionDelay, runTimeout time.Duration, maxConcurr
 	}
 	return &InMemoryRunService{
 		runs:            map[string]*RunRecord{},
+		events:          map[string][]RunEvent{},
+		nextSeq:         map[string]int64{},
 		cancelFuncs:     map[string]context.CancelFunc{},
 		completionDelay: delay,
 		runTimeout:      timeout,
@@ -116,6 +129,10 @@ func (s *InMemoryRunService) Start(ctx context.Context, script ScriptDescriptor,
 
 	s.runs[runID] = record
 	s.cancelFuncs[runID] = cancel
+	s.appendEventLocked(runID, "run.started", map[string]any{
+		"script_id": script.ID,
+		"status":    record.Status,
+	})
 	s.mu.Unlock()
 
 	go s.completeRunAfterDelay(runCtx, runID, script)
@@ -136,6 +153,11 @@ func (s *InMemoryRunService) completeRunAfterDelay(ctx context.Context, runID st
 			record.Error = "run timed out"
 			record.UpdatedAt = now
 			record.CompletedAt = now
+			s.appendEventLocked(runID, "run.failed", map[string]any{
+				"reason": "timeout",
+				"error":  record.Error,
+				"status": record.Status,
+			})
 		}
 		delete(s.cancelFuncs, runID)
 		s.mu.Unlock()
@@ -158,6 +180,9 @@ func (s *InMemoryRunService) completeRunAfterDelay(ctx context.Context, runID st
 		"script_id":   script.ID,
 		"script_name": script.Name,
 	}
+	s.appendEventLocked(runID, "run.completed", map[string]any{
+		"status": record.Status,
+	})
 	delete(s.cancelFuncs, runID)
 }
 
@@ -206,8 +231,38 @@ func (s *InMemoryRunService) Cancel(_ context.Context, stringRunID string) (RunR
 		cancel()
 		delete(s.cancelFuncs, runID)
 	}
+	s.appendEventLocked(runID, "run.canceled", map[string]any{
+		"status": record.Status,
+	})
 
 	return cloneRunRecord(record), true, nil
+}
+
+func (s *InMemoryRunService) Events(_ context.Context, runIDRaw string, afterSeq int64) ([]RunEvent, bool, error) {
+	if s == nil {
+		return nil, false, fmt.Errorf("run service is nil")
+	}
+	runID := stringsTrimmed(runIDRaw)
+	if runID == "" {
+		return nil, false, nil
+	}
+
+	s.mu.RLock()
+	_, ok := s.runs[runID]
+	if !ok {
+		s.mu.RUnlock()
+		return nil, false, nil
+	}
+	src := s.events[runID]
+	out := make([]RunEvent, 0, len(src))
+	for _, event := range src {
+		if event.Seq <= afterSeq {
+			continue
+		}
+		out = append(out, cloneEvent(event))
+	}
+	s.mu.RUnlock()
+	return out, true, nil
 }
 
 func cloneRunRecord(in *RunRecord) RunRecord {
@@ -232,6 +287,16 @@ func cloneMap(in map[string]any) map[string]any {
 	return out
 }
 
+func cloneEvent(in RunEvent) RunEvent {
+	return RunEvent{
+		Seq:       in.Seq,
+		RunID:     in.RunID,
+		Type:      in.Type,
+		Timestamp: in.Timestamp,
+		Payload:   cloneMap(in.Payload),
+	}
+}
+
 func stringsTrimmed(s string) string {
 	return strings.TrimSpace(s)
 }
@@ -244,4 +309,16 @@ func (s *InMemoryRunService) runningCountLocked() int {
 		}
 	}
 	return running
+}
+
+func (s *InMemoryRunService) appendEventLocked(runID, eventType string, payload map[string]any) {
+	seq := s.nextSeq[runID] + 1
+	s.nextSeq[runID] = seq
+	s.events[runID] = append(s.events[runID], RunEvent{
+		Seq:       seq,
+		RunID:     runID,
+		Type:      stringsTrimmed(eventType),
+		Timestamp: s.now(),
+		Payload:   cloneMap(payload),
+	})
 }

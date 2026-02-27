@@ -37,6 +37,8 @@ go run ./go-inventory-chat/cmd/go-go-os-launcher go-go-os-launcher \
 - `GET /api/apps/gepa/scripts`
 - `POST /api/apps/gepa/runs`
 - `GET /api/apps/gepa/runs/<run-id>`
+- `GET /api/apps/gepa/runs/<run-id>/events`
+- `GET /api/apps/gepa/runs/<run-id>/timeline`
 - `POST /api/apps/gepa/runs/<run-id>/cancel`
 - `GET /api/apps/gepa/schemas/<schema-id>`
 
@@ -93,6 +95,13 @@ Cancel a run:
 
 ```bash
 curl -s -X POST localhost:8091/api/apps/gepa/runs/<run-id>/cancel | jq
+```
+
+Stream events and inspect timeline:
+
+```bash
+curl -N localhost:8091/api/apps/gepa/runs/<run-id>/events
+curl -s localhost:8091/api/apps/gepa/runs/<run-id>/timeline | jq
 ```
 
 Inspect reflection and schemas:

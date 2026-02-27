@@ -85,6 +85,7 @@ func integrationProfilesPath() string       { return integrationAppBasePath + "/
 func integrationCurrentProfilePath() string { return integrationAppBasePath + "/api/chat/profile" }
 func integrationConfirmPath() string        { return integrationAppBasePath + "/confirm" }
 func integrationGEPAScriptsPath() string    { return integrationGepaAppBasePath + "/scripts" }
+func integrationGEPARunsPath() string       { return integrationGepaAppBasePath + "/runs" }
 func integrationDebugConversationsPath() string {
 	return integrationAppBasePath + "/api/debug/conversations"
 }
@@ -486,6 +487,58 @@ func TestGEPAModule_ReflectionAndScriptsEndpoints(t *testing.T) {
 	require.NoError(t, json.NewDecoder(scriptsResp.Body).Decode(&scriptsPayload))
 	_, ok = scriptsPayload["scripts"].([]any)
 	require.True(t, ok)
+}
+
+func TestGEPAModule_RunTimelineAndEventsEndpoints(t *testing.T) {
+	srv := newIntegrationServer(t)
+	defer srv.Close()
+
+	scriptsResp, err := http.Get(srv.URL + integrationGEPAScriptsPath())
+	require.NoError(t, err)
+	defer scriptsResp.Body.Close()
+	require.Equal(t, http.StatusOK, scriptsResp.StatusCode)
+
+	var scriptsPayload struct {
+		Scripts []map[string]any `json:"scripts"`
+	}
+	require.NoError(t, json.NewDecoder(scriptsResp.Body).Decode(&scriptsPayload))
+	if len(scriptsPayload.Scripts) == 0 {
+		t.Skip("no local scripts discovered in integration environment")
+	}
+	scriptID, _ := scriptsPayload.Scripts[0]["id"].(string)
+	require.NotEmpty(t, scriptID)
+
+	startBody := fmt.Sprintf(`{"script_id":"%s"}`, scriptID)
+	startResp, err := http.Post(srv.URL+integrationGEPARunsPath(), "application/json", strings.NewReader(startBody))
+	require.NoError(t, err)
+	defer startResp.Body.Close()
+	require.Equal(t, http.StatusCreated, startResp.StatusCode)
+
+	var startPayload struct {
+		Run map[string]any `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startResp.Body).Decode(&startPayload))
+	runID, _ := startPayload.Run["run_id"].(string)
+	require.NotEmpty(t, runID)
+
+	eventsResp, err := http.Get(srv.URL + integrationGEPARunsPath() + "/" + runID + "/events")
+	require.NoError(t, err)
+	defer eventsResp.Body.Close()
+	require.Equal(t, http.StatusOK, eventsResp.StatusCode)
+	eventsRaw, err := io.ReadAll(eventsResp.Body)
+	require.NoError(t, err)
+	eventsBody := string(eventsRaw)
+	require.Contains(t, eventsBody, "event: run.started")
+
+	timelineResp, err := http.Get(srv.URL + integrationGEPARunsPath() + "/" + runID + "/timeline")
+	require.NoError(t, err)
+	defer timelineResp.Body.Close()
+	require.Equal(t, http.StatusOK, timelineResp.StatusCode)
+
+	var timeline map[string]any
+	require.NoError(t, json.NewDecoder(timelineResp.Body).Decode(&timeline))
+	require.Equal(t, runID, timeline["run_id"])
+	require.NotEmpty(t, timeline["status"])
 }
 
 func TestLegacyAliasRoutes_AreNotMounted(t *testing.T) {

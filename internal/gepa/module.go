@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +74,8 @@ func (m *Module) Manifest() backendhost.AppBackendManifest {
 		Required:    false,
 		Capabilities: []string{
 			"script-runner",
+			"events",
+			"timeline",
 			"schemas",
 			"reflection",
 		},
@@ -181,12 +185,30 @@ func (m *Module) Reflection(context.Context) (*backendhost.ModuleReflectionDocum
 				ResponseSchema: "gepa.runs.get.response.v1",
 				ErrorSchema:    "gepa.error.v1",
 			},
+			{
+				ID:             "stream-run-events",
+				Method:         http.MethodGet,
+				Path:           basePath + "/runs/{run_id}/events",
+				Summary:        "Stream run events with Server-Sent Events",
+				ResponseSchema: "gepa.runs.events.stream.v1",
+				ErrorSchema:    "gepa.error.v1",
+			},
+			{
+				ID:             "get-run-timeline",
+				Method:         http.MethodGet,
+				Path:           basePath + "/runs/{run_id}/timeline",
+				Summary:        "Return timeline projection for one run",
+				ResponseSchema: "gepa.runs.timeline.response.v1",
+				ErrorSchema:    "gepa.error.v1",
+			},
 		},
 		Schemas: []backendhost.ReflectionSchemaRef{
 			{ID: "gepa.scripts.list.response.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.scripts.list.response.v1"},
 			{ID: "gepa.runs.start.request.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.runs.start.request.v1"},
 			{ID: "gepa.runs.start.response.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.runs.start.response.v1"},
 			{ID: "gepa.runs.get.response.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.runs.get.response.v1"},
+			{ID: "gepa.runs.events.stream.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.runs.events.stream.v1"},
+			{ID: "gepa.runs.timeline.response.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.runs.timeline.response.v1"},
 			{ID: "gepa.error.v1", Format: "json-schema", URI: basePath + "/schemas/gepa.error.v1"},
 		},
 	}, nil
@@ -297,6 +319,24 @@ func (m *Module) handleRunsSubresource(w http.ResponseWriter, req *http.Request)
 		writeJSON(w, http.StatusOK, map[string]any{"run": run})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "events" {
+		if req.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+		runID := strings.TrimSpace(parts[0])
+		m.handleRunEvents(w, req, runID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "timeline" {
+		if req.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+		runID := strings.TrimSpace(parts[0])
+		m.handleRunTimeline(w, req, runID)
+		return
+	}
 
 	http.NotFound(w, req)
 }
@@ -318,6 +358,112 @@ func (m *Module) handleSchemaByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
+}
+
+func (m *Module) handleRunEvents(w http.ResponseWriter, req *http.Request, runID string) {
+	if runID == "" {
+		http.NotFound(w, req)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+
+	afterSeq, err := parseAfterSeq(req.URL.Query().Get("afterSeq"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	_, _ = io.WriteString(w, "retry: 1000\n\n")
+	flusher.Flush()
+
+	for {
+		events, found, err := m.runs.Events(req.Context(), runID, afterSeq)
+		if err != nil {
+			return
+		}
+		if !found {
+			http.NotFound(w, req)
+			return
+		}
+
+		for _, event := range events {
+			payload, marshalErr := json.Marshal(event)
+			if marshalErr != nil {
+				return
+			}
+			_, _ = fmt.Fprintf(w, "id: %d\n", event.Seq)
+			_, _ = fmt.Fprintf(w, "event: %s\n", event.Type)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+			afterSeq = event.Seq
+		}
+
+		run, foundRun, err := m.runs.Get(req.Context(), runID)
+		if err != nil {
+			return
+		}
+		if !foundRun {
+			return
+		}
+		if isTerminalStatus(run.Status) {
+			return
+		}
+
+		select {
+		case <-req.Context().Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (m *Module) handleRunTimeline(w http.ResponseWriter, req *http.Request, runID string) {
+	run, found, err := m.runs.Get(req.Context(), runID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, req)
+		return
+	}
+	events, found, err := m.runs.Events(req.Context(), runID, 0)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, req)
+		return
+	}
+
+	counts := map[string]int{}
+	lastSeq := int64(0)
+	lastType := ""
+	for _, event := range events {
+		counts[event.Type]++
+		lastType = event.Type
+		if event.Seq > lastSeq {
+			lastSeq = event.Seq
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"run_id":      run.RunID,
+		"status":      run.Status,
+		"last_seq":    lastSeq,
+		"last_event":  lastType,
+		"event_count": len(events),
+		"counts":      counts,
+		"events":      events,
+	})
 }
 
 func (m *Module) findScript(ctx context.Context, scriptID string) (ScriptDescriptor, bool, error) {
@@ -347,4 +493,25 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{
 		"error": strings.TrimSpace(msg),
 	})
+}
+
+func parseAfterSeq(raw string) (int64, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("invalid afterSeq")
+	}
+	return value, nil
+}
+
+func isTerminalStatus(status RunStatus) bool {
+	switch status {
+	case RunStatusCompleted, RunStatusFailed, RunStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }

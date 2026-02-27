@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,4 +174,89 @@ func TestModule_EnforcesMaxConcurrentRuns(t *testing.T) {
 	secondRR := httptest.NewRecorder()
 	mux.ServeHTTP(secondRR, secondReq)
 	require.Equal(t, http.StatusTooManyRequests, secondRR.Code)
+}
+
+func TestModule_EventsAndTimelineEndpoints(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "events.js"), []byte("console.log('events')"), 0o600))
+
+	module, err := NewModule(ModuleConfig{
+		ScriptsRoots:       []string{tmp},
+		EnableReflection:   true,
+		RunCompletionDelay: 150 * time.Millisecond,
+		RunTimeout:         5 * time.Second,
+		MaxConcurrentRuns:  2,
+	})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	startReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader([]byte(`{"script_id":"events.js"}`)))
+	startRR := httptest.NewRecorder()
+	mux.ServeHTTP(startRR, startReq)
+	require.Equal(t, http.StatusCreated, startRR.Code)
+
+	var startPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startRR.Body).Decode(&startPayload))
+	runID := startPayload.Run.RunID
+
+	eventsReq := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/events?afterSeq=0", nil)
+	eventsRR := httptest.NewRecorder()
+	mux.ServeHTTP(eventsRR, eventsReq)
+	require.Equal(t, http.StatusOK, eventsRR.Code)
+	body := eventsRR.Body.String()
+	require.Contains(t, body, "event: run.started")
+	require.Contains(t, body, "event: run.completed")
+
+	timelineReq := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/timeline", nil)
+	timelineRR := httptest.NewRecorder()
+	mux.ServeHTTP(timelineRR, timelineReq)
+	require.Equal(t, http.StatusOK, timelineRR.Code)
+
+	var timelinePayload map[string]any
+	require.NoError(t, json.NewDecoder(timelineRR.Body).Decode(&timelinePayload))
+	require.Equal(t, runID, timelinePayload["run_id"])
+	require.Equal(t, string(RunStatusCompleted), timelinePayload["status"])
+	counts, ok := timelinePayload["counts"].(map[string]any)
+	require.True(t, ok)
+	_, hasStarted := counts["run.started"]
+	require.True(t, hasStarted)
+	_, hasCompleted := counts["run.completed"]
+	require.True(t, hasCompleted)
+}
+
+func TestModule_EventsEndpointRejectsInvalidAfterSeq(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "events.js"), []byte("console.log('events')"), 0o600))
+
+	module, err := NewModule(ModuleConfig{
+		ScriptsRoots:       []string{tmp},
+		EnableReflection:   true,
+		RunCompletionDelay: 150 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	require.NoError(t, module.MountRoutes(mux))
+
+	startReq := httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader([]byte(`{"script_id":"events.js"}`)))
+	startRR := httptest.NewRecorder()
+	mux.ServeHTTP(startRR, startReq)
+	require.Equal(t, http.StatusCreated, startRR.Code)
+
+	var startPayload struct {
+		Run RunRecord `json:"run"`
+	}
+	require.NoError(t, json.NewDecoder(startRR.Body).Decode(&startPayload))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+startPayload.Run.RunID+"/events?afterSeq=abc", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	payload, err := io.ReadAll(rr.Body)
+	require.NoError(t, err)
+	require.True(t, strings.Contains(string(payload), "invalid afterSeq"))
 }

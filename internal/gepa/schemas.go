@@ -56,6 +56,33 @@ var schemaDocuments = map[string]map[string]any{
 		},
 		"required": []any{"run"},
 	},
+	"gepa.runs.events.stream.v1": {
+		"type": "object",
+		"properties": map[string]any{
+			"seq":       map[string]any{"type": "integer"},
+			"run_id":    map[string]any{"type": "string"},
+			"type":      map[string]any{"type": "string"},
+			"timestamp": map[string]any{"type": "string"},
+			"payload":   map[string]any{"type": "object"},
+		},
+	},
+	"gepa.runs.timeline.response.v1": {
+		"type": "object",
+		"properties": map[string]any{
+			"run_id":      map[string]any{"type": "string"},
+			"status":      map[string]any{"type": "string"},
+			"last_seq":    map[string]any{"type": "integer"},
+			"last_event":  map[string]any{"type": "string"},
+			"event_count": map[string]any{"type": "integer"},
+			"counts":      map[string]any{"type": "object"},
+			"events": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+				},
+			},
+		},
+	},
 	"gepa.error.v1": {
 		"type": "object",
 		"properties": map[string]any{
