@@ -271,12 +271,19 @@ func parseMarkdown(moduleID, filePath, raw string, opts ParseOptions) (ModuleDoc
 func splitFrontmatter(raw string) (string, string) {
 	start := strings.TrimPrefix(raw, "---\n")
 	idx := strings.Index(start, "\n---\n")
-	if idx < 0 {
-		return "", raw
+	if idx >= 0 {
+		fm := start[:idx]
+		body := start[idx+len("\n---\n"):]
+		return fm, body
 	}
-	fm := start[:idx]
-	body := start[idx+len("\n---\n"):]
-	return fm, body
+
+	// Also accept closing fences that end exactly at EOF (no trailing newline).
+	if strings.HasSuffix(start, "\n---") {
+		fm := strings.TrimSuffix(start, "\n---")
+		return fm, ""
+	}
+
+	return "", raw
 }
 
 func normalizeSlug(slug string) string {

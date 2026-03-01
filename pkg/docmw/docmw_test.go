@@ -51,6 +51,23 @@ hello`)},
 	require.Contains(t, err.Error(), "missing required frontmatter field: title")
 }
 
+func TestParseFS_SupportsFrontmatterClosingFenceAtEOF(t *testing.T) {
+	fsys := fstest.MapFS{
+		"overview.md": {Data: []byte(`---
+Title: Overview
+DocType: guide
+---`)},
+	}
+
+	store, err := ParseFS("inventory", fsys, ParseOptions{})
+	require.NoError(t, err)
+	require.Len(t, store.Docs, 1)
+	require.Equal(t, "overview", store.Docs[0].Slug)
+	require.Equal(t, "Overview", store.Docs[0].Title)
+	require.Equal(t, "guide", store.Docs[0].DocType)
+	require.Equal(t, "", store.Docs[0].Content)
+}
+
 func TestNewDocStore_DuplicateSlugFails(t *testing.T) {
 	_, err := NewDocStore("inventory", []ModuleDoc{
 		{Slug: "overview", Title: "Overview", DocType: "guide"},
