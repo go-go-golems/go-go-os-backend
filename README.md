@@ -1,118 +1,44 @@
-# go-go-os
+# go-go-os-backend
 
-Inventory backend module host for the launcher-first `go-go-os` runtime.
+Backend host contracts and lifecycle for launcher app modules.
 
-## Run (from repo root)
+## Overview
 
-Build and run the single launcher binary (embedded frontend + backend modules):
+This repository owns the `backendhost` package extracted from `go-go-os`.
+It provides shared contracts and wiring helpers used by launcher-composition repos.
 
-```bash
-npm run launcher:binary:build
-./build/go-go-os-launcher go-go-os-launcher \
-  --addr :8091 \
-  --inventory-db ./go-go-os/data/inventory.db \
-  --timeline-db ./go-go-os/data/webchat-timeline.db \
-  --turns-db ./go-go-os/data/webchat-turns.db
-```
+Primary package:
 
-Run directly without prebuilding the binary:
+- `pkg/backendhost`
 
-```bash
-go run ./go-go-os/cmd/go-go-os-launcher go-go-os-launcher \
-  --addr :8091 \
-  --inventory-db ./go-go-os/data/inventory.db \
-  --timeline-db ./go-go-os/data/webchat-timeline.db \
-  --turns-db ./go-go-os/data/webchat-turns.db
-```
+## Package Highlights
 
-## Key routes
+- App backend module contract (`AppBackendModule`)
+- Lifecycle manager (`Init` / `Start` / `Health` / `Stop` sequencing)
+- Namespaced route mounting under `/api/apps/<app-id>`
+- Manifest and reflection endpoint registration (`/api/os/apps`)
+- Legacy alias guardrails for hard-cut route policy
 
-- `GET /` launcher shell (embedded `apps/os-launcher` build)
-- `GET /api/os/apps` backend module manifest + health
-- `GET /api/os/apps/<app-id>/reflection` module reflection payload (if implemented)
-- `POST /api/apps/inventory/chat`
-- `GET /api/apps/inventory/ws?conv_id=<id>`
-- `GET /api/apps/inventory/api/timeline?conv_id=<id>`
-- `GET /api/apps/inventory/api/chat/profiles`
-- `GET /api/apps/gepa/scripts`
-- `POST /api/apps/gepa/runs`
-- `GET /api/apps/gepa/runs/<run-id>`
-- `GET /api/apps/gepa/runs/<run-id>/events`
-- `GET /api/apps/gepa/runs/<run-id>/timeline`
-- `POST /api/apps/gepa/runs/<run-id>/cancel`
-- `GET /api/apps/gepa/schemas/<schema-id>`
-
-Hard-cut route policy:
-
-- legacy aliases are intentionally blocked: `/chat`, `/ws`, `/api/timeline`
-
-## Validation
+## Install
 
 ```bash
-cd go-go-os
-go test ./...
+go get github.com/go-go-golems/go-go-os-backend@latest
 ```
+
+## Usage
+
+```go
+import "github.com/go-go-golems/go-go-os-backend/pkg/backendhost"
+```
+
+## Development
 
 ```bash
-cd ..
-npm run launcher:smoke
+make lint
+make test
+make build
 ```
 
-## GEPA module config and curl runbook
+## License
 
-The launcher now mounts a non-required internal GEPA backend module under
-`/api/apps/gepa/*`.
-
-Script catalog roots are controlled via:
-
-```bash
---gepa-scripts-root "/path/to/scripts,/another/path"
---gepa-run-timeout-seconds 30
---gepa-max-concurrent-runs 4
-```
-
-List scripts:
-
-```bash
-curl -s localhost:8091/api/apps/gepa/scripts | jq
-```
-
-Start a run:
-
-```bash
-curl -s -X POST localhost:8091/api/apps/gepa/runs \
-  -H 'Content-Type: application/json' \
-  -d '{"script_id":"example.js","arguments":["--dry-run"]}' | jq
-```
-
-Get run status:
-
-```bash
-curl -s localhost:8091/api/apps/gepa/runs/<run-id> | jq
-```
-
-Cancel a run:
-
-```bash
-curl -s -X POST localhost:8091/api/apps/gepa/runs/<run-id>/cancel | jq
-```
-
-Stream events and inspect timeline:
-
-```bash
-curl -N localhost:8091/api/apps/gepa/runs/<run-id>/events
-curl -s localhost:8091/api/apps/gepa/runs/<run-id>/timeline | jq
-```
-
-Inspect reflection and schemas:
-
-```bash
-curl -s localhost:8091/api/os/apps/gepa/reflection | jq
-curl -s localhost:8091/api/apps/gepa/schemas/gepa.runs.start.request.v1 | jq
-```
-
-## Notes
-
-- Runtime key is locked to `inventory`.
-- Runtime overrides are rejected in the request resolver.
-- Model/provider selection uses Geppetto/Glazed CLI sections.
+MIT. See `LICENSE`.

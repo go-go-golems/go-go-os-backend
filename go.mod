@@ -1,4 +1,4 @@
-module github.com/go-go-golems/go-go-os
+module github.com/go-go-golems/go-go-os-backend
 
 go 1.25.7
 
