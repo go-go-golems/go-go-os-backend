@@ -13,6 +13,7 @@ type AppManifestDocument struct {
 	Required     bool                       `json:"required"`
 	Capabilities []string                   `json:"capabilities,omitempty"`
 	Reflection   *AppManifestReflectionHint `json:"reflection,omitempty"`
+	Docs         *AppManifestDocsHint       `json:"docs,omitempty"`
 	Healthy      bool                       `json:"healthy"`
 	HealthError  string                     `json:"health_error,omitempty"`
 }
@@ -20,6 +21,13 @@ type AppManifestDocument struct {
 type AppManifestReflectionHint struct {
 	Available bool   `json:"available"`
 	URL       string `json:"url,omitempty"`
+	Version   string `json:"version,omitempty"`
+}
+
+type AppManifestDocsHint struct {
+	Available bool   `json:"available"`
+	URL       string `json:"url,omitempty"`
+	Count     int    `json:"count,omitempty"`
 	Version   string `json:"version,omitempty"`
 }
 
@@ -55,6 +63,16 @@ func RegisterAppsManifestEndpoint(mux *http.ServeMux, registry *ModuleRegistry) 
 					Available: true,
 					URL:       "/api/os/apps/" + doc.AppID + "/reflection",
 					Version:   "v1",
+				}
+			}
+			if documentable, ok := module.(DocumentableAppBackendModule); ok {
+				if store := documentable.DocStore(); store != nil {
+					doc.Docs = &AppManifestDocsHint{
+						Available: true,
+						URL:       "/api/apps/" + doc.AppID + "/docs",
+						Count:     store.Count(),
+						Version:   "v1",
+					}
 				}
 			}
 			if healthErr != nil {

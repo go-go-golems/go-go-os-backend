@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-go-golems/go-go-os-backend/pkg/docmw"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,6 +23,7 @@ type fakeModule struct {
 
 	reflectionDoc *ModuleReflectionDocument
 	reflectionErr error
+	docStore      *docmw.DocStore
 }
 
 type fakePlainModule struct {
@@ -63,6 +65,10 @@ func (f *fakeModule) Health(context.Context) error {
 
 func (f *fakeModule) Reflection(context.Context) (*ModuleReflectionDocument, error) {
 	return f.reflectionDoc, f.reflectionErr
+}
+
+func (f *fakeModule) DocStore() *docmw.DocStore {
+	return f.docStore
 }
 
 func (f *fakePlainModule) Manifest() AppBackendManifest {
@@ -182,6 +188,16 @@ func TestLifecycleManager_StartFailureStopsFailingModule(t *testing.T) {
 }
 
 func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
+	docStore, err := docmw.NewDocStore("inventory", []docmw.ModuleDoc{
+		{
+			Slug:    "overview",
+			Title:   "Overview",
+			DocType: "guide",
+			Content: "hello",
+		},
+	})
+	require.NoError(t, err)
+
 	registry, err := NewModuleRegistry(
 		&fakeModule{
 			manifest: AppBackendManifest{AppID: "inventory", Name: "Inventory", Required: true, Capabilities: []string{"chat"}},
@@ -189,6 +205,7 @@ func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
 				AppID: "inventory",
 				Name:  "Inventory",
 			},
+			docStore: docStore,
 		},
 		&fakePlainModule{manifest: AppBackendManifest{AppID: "crm", Name: "CRM"}, healthErr: errors.New("offline")},
 	)
@@ -209,10 +226,14 @@ func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
 	require.True(t, payload.Apps[0].Healthy)
 	require.NotNil(t, payload.Apps[0].Reflection)
 	require.Equal(t, "/api/os/apps/inventory/reflection", payload.Apps[0].Reflection.URL)
+	require.NotNil(t, payload.Apps[0].Docs)
+	require.Equal(t, "/api/apps/inventory/docs", payload.Apps[0].Docs.URL)
+	require.Equal(t, 1, payload.Apps[0].Docs.Count)
 	require.Equal(t, "crm", payload.Apps[1].AppID)
 	require.False(t, payload.Apps[1].Healthy)
 	require.Equal(t, "offline", payload.Apps[1].HealthError)
 	require.Nil(t, payload.Apps[1].Reflection)
+	require.Nil(t, payload.Apps[1].Docs)
 }
 
 func TestRegisterAppsManifestEndpoint_ModuleReflectionRoute_ReturnsPayload(t *testing.T) {
