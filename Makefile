@@ -1,10 +1,14 @@
-.PHONY: gifs
+.PHONY: gifs proto ts-proto codegen frontend-check buf-lint test build install ci ui-build dev-backend dev-frontend dev-tmux
 
 all: gifs
 
 VERSION=v0.1.14
 GORELEASER_ARGS ?= --skip=sign --snapshot --clean
 GORELEASER_TARGET ?= --single-target
+
+AGENT_UI_DIR=agent-ui-system
+AGENT_UI_TSC_BIN=$(AGENT_UI_DIR)/node_modules/.bin/tsc
+AGENT_UI_TS_PROTO_BIN=$(AGENT_UI_DIR)/node_modules/.bin/protoc-gen-ts_proto
 
 TAPES=$(wildcard doc/vhs/*tape)
 gifs: $(TAPES)
@@ -14,28 +18,33 @@ docker-lint:
 	docker run --rm -v $(shell pwd):/app -w /app golangci/golangci-lint:latest golangci-lint run -v
 
 lint:
-	GOWORK=off golangci-lint run -v
+	golangci-lint run -v
 
 lintmax:
-	GOWORK=off golangci-lint run -v --max-same-issues=100
+	golangci-lint run -v --max-same-issues=100
 
 gosec:
-	GOWORK=off go install github.com/securego/gosec/v2/cmd/gosec@latest
-	gosec -exclude-generated -exclude=G101,G304,G301,G306 -exclude-dir=.history ./...
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	gosec -exclude-generated -exclude=G101,G304,G301,G306 -exclude-dir=.history -exclude-dir=proto/generated/go ./...
 
 govulncheck:
-	GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 	govulncheck ./...
 
 test:
-	GOWORK=off go test ./...
+	go test ./... -count=1
 
-build:
-	GOWORK=off go generate ./...
-	GOWORK=off go build ./...
+
+build: codegen ui-build
+	go build -tags embed ./...
+
+ci: buf-lint test
+
+DEV_API_ADDR ?= :3001
+DEV_UI_PORT ?= 3000
 
 goreleaser:
-	GOWORK=off goreleaser release $(GORELEASER_ARGS) $(GORELEASER_TARGET)
+	goreleaser release $(GORELEASER_ARGS) $(GORELEASER_TARGET)
 
 tag-major:
 	git tag $(shell svu major)
@@ -46,16 +55,11 @@ tag-minor:
 tag-patch:
 	git tag $(shell svu patch)
 
-release:
-	git push origin --tags
-	GOWORK=off GOPROXY=proxy.golang.org go list -m github.com/go-go-golems/XXX@$(shell svu current)
-
 bump-glazed:
-	GOWORK=off go get github.com/go-go-golems/glazed@latest
-	GOWORK=off go get github.com/go-go-golems/clay@latest
-	GOWORK=off go mod tidy
+	go get github.com/go-go-golems/glazed@latest
+	go get github.com/go-go-golems/clay@latest
+	go get github.com/go-go-golems/plz-confirm@latest
+	go get github.com/go-go-golems/geppetto@latest
+	go get github.com/go-go-golems/pinocchio@latest
+	go mod tidy
 
-XXX_BINARY=$(shell which XXX)
-install:
-	GOWORK=off go build -o ./dist/XXX ./cmd/XXX && \
-		cp ./dist/XXX $(XXX_BINARY)
