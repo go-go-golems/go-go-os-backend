@@ -1,0 +1,17 @@
+topics:
+  - backend
+  - frontend
+  - onboarding
+  - api
+  - runtime
+  - troubleshooting
+  - profiles
+  - sessions
+  - scripts
+  - timeline
+doc_types:
+  - guide
+  - reference
+  - tutorial
+  - troubleshooting
+

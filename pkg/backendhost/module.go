@@ -3,6 +3,8 @@ package backendhost
 import (
 	"context"
 	"net/http"
+
+	"github.com/go-go-golems/go-go-os-backend/pkg/docmw"
 )
 
 // AppBackendManifest describes one backend-capable launcher app module.
@@ -28,6 +30,12 @@ type AppBackendModule interface {
 // discoverable API/schema/docs metadata.
 type ReflectiveAppBackendModule interface {
 	Reflection(ctx context.Context) (*ModuleReflectionDocument, error)
+}
+
+// DocumentableAppBackendModule is an optional interface for modules that expose
+// frontmatter-backed module documentation pages.
+type DocumentableAppBackendModule interface {
+	DocStore() *docmw.DocStore
 }
 
 type ModuleReflectionDocument struct {
