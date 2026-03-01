@@ -40,11 +40,11 @@ func (m *LifecycleManager) Startup(ctx context.Context, opts StartupOptions) err
 			_ = m.Stop(ctx)
 			return fmt.Errorf("init module %q: %w", appID, err)
 		}
+		m.started = append(m.started, module)
 		if err := module.Start(ctx); err != nil {
 			_ = m.Stop(ctx)
 			return fmt.Errorf("start module %q: %w", appID, err)
 		}
-		m.started = append(m.started, module)
 	}
 
 	requiredSet := m.requiredSet(opts.RequiredAppIDs)

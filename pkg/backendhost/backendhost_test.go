@@ -18,6 +18,7 @@ type fakeModule struct {
 	startErr  error
 	stopErr   error
 	healthErr error
+	stopCalls int
 
 	reflectionDoc *ModuleReflectionDocument
 	reflectionErr error
@@ -52,6 +53,7 @@ func (f *fakeModule) Start(context.Context) error {
 }
 
 func (f *fakeModule) Stop(context.Context) error {
+	f.stopCalls++
 	return f.stopErr
 }
 
@@ -116,6 +118,23 @@ func TestMountNamespacedRoutes_MountsUnderAppPrefix(t *testing.T) {
 	require.Equal(t, "ok", rr.Body.String())
 }
 
+func TestMountNamespacedRoutes_PrefixRootRedirectStaysNamespaced(t *testing.T) {
+	mux := http.NewServeMux()
+	err := MountNamespacedRoutes(mux, "inventory", func(sub *http.ServeMux) error {
+		sub.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("ok"))
+		})
+		return nil
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/apps/inventory", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusMovedPermanently, rr.Code)
+	require.Equal(t, "/api/apps/inventory/", rr.Header().Get("Location"))
+}
+
 func TestGuardNoLegacyAliases_FailsForForbiddenPaths(t *testing.T) {
 	err := GuardNoLegacyAliases([]string{"/chat", "/api/apps/inventory/chat"})
 	require.Error(t, err)
@@ -142,6 +161,24 @@ func TestLifecycleManager_RequiredHealthFailureFailsStartup(t *testing.T) {
 	err = manager.Startup(context.Background(), StartupOptions{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "health check failed")
+}
+
+func TestLifecycleManager_StartFailureStopsFailingModule(t *testing.T) {
+	first := &fakeModule{manifest: AppBackendManifest{AppID: "inventory"}}
+	second := &fakeModule{
+		manifest: AppBackendManifest{AppID: "crm"},
+		startErr: errors.New("start failed"),
+	}
+
+	registry, err := NewModuleRegistry(first, second)
+	require.NoError(t, err)
+
+	manager := NewLifecycleManager(registry)
+	err = manager.Startup(context.Background(), StartupOptions{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "start module \"crm\"")
+	require.Equal(t, 1, second.stopCalls, "failing module must be stopped during rollback")
+	require.Equal(t, 1, first.stopCalls, "already-started modules must be stopped during rollback")
 }
 
 func TestRegisterAppsManifestEndpoint_ReturnsManifestAndHealth(t *testing.T) {
