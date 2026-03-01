@@ -51,7 +51,6 @@ func MountNamespacedRoutes(parent *http.ServeMux, appID string, mount func(mux *
 		return err
 	}
 
-	parent.Handle(prefix, http.StripPrefix(prefix, subMux))
 	parent.Handle(prefix+"/", http.StripPrefix(prefix, subMux))
 	return nil
 }
