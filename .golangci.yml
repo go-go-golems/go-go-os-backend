@@ -24,12 +24,6 @@ linters:
     #    - gochecknoinits
     - nonamedreturns
     - predeclared
-  # Exclusions configuration
-  exclusions:
-    rules:
-      - linters:
-          - staticcheck
-        text: 'SA1019: cli.CreateProcessorLegacy'
   settings:
     errcheck:
       exclude-functions:

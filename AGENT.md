@@ -2,7 +2,7 @@
 
 ## Build Commands
 
-- Run a binary in XXX/YYY/FOOO: `go run ./XXX/YYY/FOOO` . Use this instead of build + ./XXX.
+- Run a binary in `cmd/...`: `go run ./cmd/<name>`. Use this instead of build + executing local binaries.
 - Build: `go build ./...`
 - Test: `go test ./...`
 - Run single test: `go test ./pkg/path/to/package -run TestName`
@@ -16,9 +16,9 @@ Use capture-pane to read the output.
 ## Project Structure
 
 - `cmd/`: CLI commands and entry points
-- `pkg/`: Library code organized by domain
+- `internal/`: Library code organized by domain
 - `examples/`: Example configurations and usage
-- `doc/`: Documentation
+- `docs/`: Documentation (optional)
 - `ttmp/YYYY-MM-DD/`: this is where all temporary documentation as well as debugging logs and other reports go
 
 <runningProcessesGuidelines>
@@ -52,6 +52,7 @@ Use capture-pane to read the output.
 - Use bootstrap for styling.
 - Store css, html and js in different files in a static directory.
 - Use go:embed to serve static files.
+- Use templ for go templates, assume I'm running templ generate -watch in the background.
 - Always serve static files under /static/ URL paths, never directly under functional paths like /admin/
 </webGuidelines>
 
@@ -64,4 +65,6 @@ If me or you the LLM agent seem to go down too deep in a debugging/fixing rabbit
 Don't add backwards compatibility layers or adapters unless explicitly asked. If you think there is a need for a backwards compatibility or adapting to an existing interface, STOP AND ASK ME IF THAT IS NECESSARY. Usually, I don't need backwards compatibility.
 
 If it looks like your edits aren't applied, stop immediately and say "STOPPING BECAUSE EDITING ISN'T WORKING".
+
+Run the format_file tool at the end of each response.
 </generalGuidelines>

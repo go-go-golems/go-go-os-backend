@@ -24,10 +24,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install arm64 cross-compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
@@ -37,6 +34,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           GGOOS: linux
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux
@@ -53,6 +51,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
@@ -62,6 +61,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           GGOOS: darwin
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-darwin
@@ -82,9 +82,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
       - uses: actions/download-artifact@v4
         with:
           path: dist-parts
+
       - name: Merge dist artifacts
         run: |
           rm -rf dist
@@ -96,6 +98,7 @@ jobs:
               cp -a "dist-parts/${part}/." dist/
             fi
           done
+
       - name: Import GPG key
         id: import_gpg
         uses: crazy-max/ghaction-import-gpg@v6
@@ -103,6 +106,7 @@ jobs:
           gpg_private_key: ${{ secrets.GO_GO_GOLEMS_SIGN_KEY }}
           passphrase: ${{ secrets.GO_GO_GOLEMS_SIGN_PASSPHRASE }}
           fingerprint: "6EBE1DF0BDF48A1BBA381B5B79983EF218C6ED7E"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
