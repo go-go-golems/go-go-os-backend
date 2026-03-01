@@ -4,7 +4,7 @@ Backend host contracts and lifecycle for launcher app modules.
 
 ## Overview
 
-This repository owns the `backendhost` package extracted from `go-go-os`.
+This repository owns the `backendhost` package extracted from `go-go-os-frontend`.
 It provides shared contracts and wiring helpers used by launcher-composition repos.
 
 Primary package:
