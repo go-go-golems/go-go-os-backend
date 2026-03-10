@@ -2,6 +2,7 @@ package vmmeta
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,6 +172,28 @@ defineCard('aBoard', () => ({ render() { return null; }, handlers: { pong() {} }
 	}
 	if strings.Index(firstJSON, `"id": "aBoard"`) > strings.Index(firstJSON, `"id": "bBoard"`) {
 		t.Fatal("expected cards to be sorted deterministically by id")
+	}
+}
+
+func TestJSObjectToJSONPreservesQuotedStrings(t *testing.T) {
+	t.Parallel()
+
+	input := `{title: "alpha: // keep this", subtitle: 'It\'s "fine"', note: "x:y"}`
+	data := jsObjectToJSON(input)
+
+	var got map[string]string
+	if err := json.Unmarshal([]byte(data), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", data, err)
+	}
+
+	if got["title"] != "alpha: // keep this" {
+		t.Fatalf("unexpected title: %q", got["title"])
+	}
+	if got["subtitle"] != `It's "fine"` {
+		t.Fatalf("unexpected subtitle: %q", got["subtitle"])
+	}
+	if got["note"] != "x:y" {
+		t.Fatalf("unexpected note: %q", got["note"])
 	}
 }
 

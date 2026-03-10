@@ -482,22 +482,8 @@ func jsObjectToJSON(js string) string {
 			}
 			i += 2
 
-		case ch == '\'':
-			sb.WriteByte('"')
-			i++
-			for i < n && js[i] != '\'' {
-				if js[i] == '"' {
-					sb.WriteByte('\\')
-				}
-				if js[i] == '\\' && i+1 < n {
-					sb.WriteByte(js[i])
-					i++
-				}
-				sb.WriteByte(js[i])
-				i++
-			}
-			sb.WriteByte('"')
-			i++
+		case ch == '\'' || ch == '"':
+			i = writeJSONStringToken(&sb, js, i)
 
 		case isIdentifierStart(ch):
 			start := i
@@ -526,6 +512,54 @@ func jsObjectToJSON(js string) string {
 	}
 
 	return trailingCommaPattern.ReplaceAllString(sb.String(), "$1")
+}
+
+func writeJSONStringToken(sb *strings.Builder, js string, start int) int {
+	quote := js[start]
+	n := len(js)
+
+	sb.WriteByte('"')
+	for i := start + 1; i < n; i++ {
+		ch := js[i]
+
+		if ch == '\\' {
+			if i+1 >= n {
+				sb.WriteByte('\\')
+				return n
+			}
+
+			next := js[i+1]
+			switch next {
+			case '\'':
+				if quote == '\'' {
+					sb.WriteByte('\'')
+				} else {
+					sb.WriteByte('\\')
+					sb.WriteByte(next)
+				}
+			case '"':
+				sb.WriteByte('\\')
+				sb.WriteByte('"')
+			default:
+				sb.WriteByte('\\')
+				sb.WriteByte(next)
+			}
+			i++
+			continue
+		}
+
+		if ch == quote {
+			sb.WriteByte('"')
+			return i + 1
+		}
+		if ch == '"' {
+			sb.WriteByte('\\')
+		}
+		sb.WriteByte(ch)
+	}
+
+	sb.WriteByte('"')
+	return n
 }
 
 func isIdentifierStart(ch byte) bool {
