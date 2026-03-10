@@ -51,6 +51,21 @@ func MountNamespacedRoutes(parent *http.ServeMux, appID string, mount func(mux *
 		return err
 	}
 
+	// Register the bare prefix explicitly so redirect semantics stay stable
+	// across Go releases instead of inheriting ServeMux defaults.
+	parent.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
+		location := prefix + "/"
+		if r.URL.RawQuery != "" {
+			location += "?" + r.URL.RawQuery
+		}
+
+		status := http.StatusTemporaryRedirect
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			status = http.StatusMovedPermanently
+		}
+
+		http.Redirect(w, r, location, status)
+	})
 	parent.Handle(prefix+"/", http.StripPrefix(prefix, subMux))
 	return nil
 }
