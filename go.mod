@@ -1,6 +1,6 @@
 module github.com/go-go-golems/go-go-os-backend
 
-go 1.25.7
+go 1.25.8
 
 require (
 	github.com/go-go-golems/go-go-goja v0.4.2
