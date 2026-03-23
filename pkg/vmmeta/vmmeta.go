@@ -184,12 +184,12 @@ func parseCardFile(parser *jsparse.TSParser, path string, expectedPackID string)
 		return nil, errors.Errorf("%s: __card__ packId %q does not match expected %q", path, sentinel.PackID, expectedPackID)
 	}
 
-	defineCardCall := findCallByName(root, slicer, "defineCard")
-	if defineCardCall == nil {
-		return nil, errors.Errorf("%s: missing defineCard(...) call", path)
+	defineRuntimeSurfaceCall := findCallByName(root, slicer, "defineRuntimeSurface")
+	if defineRuntimeSurfaceCall == nil {
+		return nil, errors.Errorf("%s: missing defineRuntimeSurface(...) call", path)
 	}
 
-	handlersObject := findNamedObject(defineCardCall, slicer, "handlers")
+	handlersObject := findNamedObject(defineRuntimeSurfaceCall, slicer, "handlers")
 	handlerNames := collectObjectKeys(handlersObject, slicer)
 	slices.Sort(handlerNames)
 

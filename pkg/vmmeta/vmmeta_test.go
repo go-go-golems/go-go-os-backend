@@ -30,7 +30,7 @@ func TestGenerateExtractsCardMetadataAndDocs(t *testing.T) {
 		"---\n"+
 		"Sprint board prose.\n"+
 		"`;\n"+
-		"defineCard('kanbanSprintBoard', ({ widgets }) => ({\n"+
+		"defineRuntimeSurface('kanbanSprintBoard', ({ widgets }) => ({\n"+
 		"  render() {\n"+
 		"    return widgets.kanban.board({});\n"+
 		"  },\n"+
@@ -101,7 +101,7 @@ func TestGenerateRejectsMalformedCardSentinel(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(cardsDir, "broken.vm.js"), `__card__({ id: 'brokenCard', title: 'Broken' });
-defineCard('brokenCard', () => ({ render() { return null; } }), 'kanban.v1');
+defineRuntimeSurface('brokenCard', () => ({ render() { return null; } }), 'kanban.v1');
 `)
 
 	_, err := Generate(context.Background(), GenerateOptions{
@@ -131,10 +131,10 @@ func TestGenerateAndWriteIsDeterministic(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(cardsDir, "b.vm.js"), `__card__({ id: 'bBoard', packId: 'kanban.v1', title: 'B', icon: 'B' });
-defineCard('bBoard', () => ({ render() { return null; }, handlers: { ping() {} } }), 'kanban.v1');
+defineRuntimeSurface('bBoard', () => ({ render() { return null; }, handlers: { ping() {} } }), 'kanban.v1');
 `)
 	writeTestFile(t, filepath.Join(cardsDir, "a.vm.js"), `__card__({ id: 'aBoard', packId: 'kanban.v1', title: 'A', icon: 'A' });
-defineCard('aBoard', () => ({ render() { return null; }, handlers: { pong() {} } }), 'kanban.v1');
+defineRuntimeSurface('aBoard', () => ({ render() { return null; }, handlers: { pong() {} } }), 'kanban.v1');
 `)
 	writeTestFile(t, filepath.Join(docsDir, "pack.vm.js"), `__package__({ name: 'kanban.v1', title: 'Kanban Runtime Pack' });`)
 
