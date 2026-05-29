@@ -62,3 +62,11 @@ bump-glazed:
 
 install:
 	go install $(CMD_DIR)
+
+.PHONY: logcopter-generate
+logcopter-generate:
+	GOWORK=off go tool logcopter-gen -include-main -var zlog -area-prefix go-go-golems.go-go-os-backend -strip-prefix github.com/go-go-golems/go-go-os-backend ./cmd/... ./pkg/...
+
+.PHONY: logcopter-check
+logcopter-check:
+	GOWORK=off go tool logcopter-gen -include-main -var zlog -area-prefix go-go-golems.go-go-os-backend -strip-prefix github.com/go-go-golems/go-go-os-backend -check ./cmd/... ./pkg/...
