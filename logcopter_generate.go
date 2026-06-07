@@ -1,0 +1,3 @@
+package go_go_os_backend
+
+//go:generate go tool logcopter-gen -include-main -var zlog -area-prefix go-go-golems.go-go-os-backend -strip-prefix github.com/go-go-golems/go-go-os-backend ./cmd/... ./pkg/...

@@ -3,10 +3,10 @@ module github.com/go-go-golems/go-go-os-backend
 go 1.26.3
 
 require (
-	github.com/go-go-golems/go-go-goja v0.4.2
+	github.com/go-go-golems/go-go-goja v0.8.3
 	github.com/go-go-golems/logcopter v0.1.0
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -23,7 +23,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
-	github.com/dop251/goja v0.0.0-20250630131328-58d95d85e994 // indirect
+	github.com/dop251/goja v0.0.0-20251103141225-af2ceb9156d7 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -42,7 +42,6 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0 // indirect
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect

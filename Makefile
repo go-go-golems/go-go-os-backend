@@ -63,6 +63,18 @@ bump-glazed:
 install:
 	go install $(CMD_DIR)
 
+.PHONY: bump-go-go-golems
+bump-go-go-golems:
+	@deps="$$(awk '/^require[[:space:]]+github\.com\/go-go-golems\// { print $$2 } /^[[:space:]]*github\.com\/go-go-golems\// { print $$1 }' go.mod | sort -u)"; \
+	if [ -z "$$deps" ]; then \
+		echo "No github.com/go-go-golems dependencies in go.mod"; \
+	else \
+		echo "Bumping go-go-golems dependencies:"; \
+		echo "$$deps"; \
+		for dep in $$deps; do GOWORK=off go get "$${dep}@latest"; done; \
+	fi
+	GOWORK=off go mod tidy
+
 .PHONY: logcopter-generate
 logcopter-generate:
 	GOWORK=off go tool logcopter-gen -include-main -var zlog -area-prefix go-go-golems.go-go-os-backend -strip-prefix github.com/go-go-golems/go-go-os-backend ./cmd/... ./pkg/...
